@@ -32,12 +32,10 @@ jobs:
         with:
           arch: x64
       - name: Build isolated manager (no engine substitution)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python distribution/build_windows.py \
-            --work "$RUNNER_TEMP/donut-kit-windows-work" \
-            --output "$RUNNER_TEMP/donut-kit-windows-output"
+        shell: cmd
+        env:
+          PYTHONUTF8: "1"
+        run: python distribution\build_windows.py --work "%RUNNER_TEMP%\donut-kit-windows-work" --output "%RUNNER_TEMP%\donut-kit-windows-output"
       - name: Keep failed-stage diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

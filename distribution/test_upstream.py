@@ -94,6 +94,17 @@ class UpstreamTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'inventory mismatch'):
                     mac.prepare_source(root / 'snapshot')
             self.assertFalse((root / 'snapshot').exists())
+    def test_windows_linker_does_not_fall_back_to_git_link_utility(self):
+        with self.assertRaisesRegex(RuntimeError, 'developer environment'):
+            windows.msvc_linker(None)
+        with tempfile.TemporaryDirectory(dir=TEMP) as temp:
+            toolchain = Path(temp)
+            with self.assertRaisesRegex(RuntimeError, 'linker missing'):
+                windows.msvc_linker(toolchain)
+            binary = toolchain / 'bin/Hostx64/x64/link.exe'
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'unit-test-placeholder-not-executed')
+            self.assertEqual(windows.msvc_linker(toolchain), binary)
     def test_windows_build_rejects_other_hosts_before_writes(self):
         with tempfile.TemporaryDirectory(dir=TEMP) as temp:
             root = Path(temp)

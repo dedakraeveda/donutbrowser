@@ -19,6 +19,15 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def msvc_linker(toolchain_root):
+    if not toolchain_root:
+        raise RuntimeError('Select an MSVC x64 developer environment first')
+    linker = Path(toolchain_root) / 'bin/Hostx64/x64/link.exe'
+    if not linker.is_file():
+        raise RuntimeError('MSVC x64 linker missing from selected toolchain')
+    return linker
+
+
 def build(args):
     if sys.platform != 'win32':
         raise RuntimeError('Native Windows/MSVC host required')
@@ -41,6 +50,12 @@ def build(args):
     temp = work / 'tmp'; temp.mkdir()
     env = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in
            ['TOKEN', 'PASSWORD', 'SECRET', 'API_KEY', 'LICENSE_KEY', 'GITHUB_', 'DONUT_', 'BROWSER_', 'NEXT_PUBLIC_'])}
+    # Git Bash prepends usr/bin/link.exe (a Unix link utility). Never let Rust
+    # mistake it for Microsoft's linker, even when a developer environment exists.
+    linker = msvc_linker(os.environ.get('VCToolsInstallDir'))
+    env['PATH'] = str(linker.parent) + os.pathsep + env.get('PATH', '')
+    env['CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER'] = str(linker)
+    print(json.dumps({'msvcLinker': str(linker)}), flush=True)
     env.update(TMPDIR=str(temp), TMP=str(temp), TEMP=str(temp), CARGO_HOME=str(work / 'cargo-home'),
                CARGO_TARGET_DIR=str(work / 'target'), CARGO_BUILD_JOBS='2', CARGO_INCREMENTAL='0',
                BUILD_TAG='0.29.6-authorized.7-kit1', NEXT_PUBLIC_DONUT_LOCAL_FEATURES='1',
