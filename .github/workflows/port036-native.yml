@@ -2,12 +2,17 @@ name: Donut036 reviewed source native candidates
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build only Windows (independent of a full matrix run)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: port036-native-${{ github.ref }}
+  group: port036-native-${{ github.ref }}-${{ inputs.windows_only && 'windows' || 'all' }}
   cancel-in-progress: false
 
 jobs:
@@ -15,15 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-2025
-            arch: windows-x64
-          - runner: ubuntu-24.04
-            arch: linux-x64
-          - runner: macos-15
-            arch: macos-arm64
-          - runner: macos-15-intel
-            arch: macos-x64
+        include: ${{ fromJSON(inputs.windows_only && '[{"runner":"windows-2025","arch":"windows-x64"}]' || '[{"runner":"windows-2025","arch":"windows-x64"},{"runner":"ubuntu-24.04","arch":"linux-x64"},{"runner":"macos-15","arch":"macos-arm64"},{"runner":"macos-15-intel","arch":"macos-x64"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
