@@ -19,6 +19,11 @@ BASELINE_SHA256 = POLICY['sourceSha256']
 OUTPUT_SHA256 = POLICY['candidateSha256']
 EXE_SHA256 = POLICY['originalExeSha256']
 MARKER = 'WAYFERN-FORK.json'
+ORIGINAL_INVENTORY_SHA256 = 'f50a6ceec8b4d066abcbd99cd33e701a084b67d9a5c954356eeee9935f9bbb71'
+_original_inventory = (HERE / 'wayfern-original-files.json').read_bytes()
+if hashlib.sha256(_original_inventory).hexdigest() != ORIGINAL_INVENTORY_SHA256:
+    raise ValueError('original-inventory-checksum-mismatch')
+ORIGINAL_FILES = json.loads(_original_inventory)['files']
 
 
 def digest(path: Path) -> str:
@@ -88,10 +93,14 @@ def source_inventory(root: Path) -> dict[str, str]:
         raise ValueError('unrecognized-original-engine')
     if MARKER in inventory or 'WAYFERN-MANIFEST.json' in inventory:
         raise ValueError('source-already-modified')
+    if inventory != ORIGINAL_FILES:
+        raise ValueError('original-resource-inventory-mismatch')
     return inventory
 
 
 def verify(root: Path) -> dict:
+    if not root.is_dir() or root.is_symlink() or root.is_junction():
+        raise ValueError('regular-result-required')
     marker = json.loads((root / MARKER).read_text(encoding='utf8'))
     manifest = json.loads((root / 'WAYFERN-MANIFEST.json').read_text(encoding='utf8'))
     if marker != marker_body():
@@ -101,6 +110,12 @@ def verify(root: Path) -> dict:
         raise ValueError('payload-manifest-mismatch')
     if actual.get('chrome.dll') != OUTPUT_SHA256 or actual.get('chrome.exe') != EXE_SHA256:
         raise ValueError('native-runtime-mismatch')
+    resources = dict(actual)
+    resources.pop(MARKER)
+    expected = dict(ORIGINAL_FILES)
+    expected['chrome.dll'] = OUTPUT_SHA256
+    if resources != expected:
+        raise ValueError('result-resource-inventory-mismatch')
     return {'ok': True, 'files': len(actual), 'dllSha256': OUTPUT_SHA256, 'releaseEligible': False, 'managerIntegrationVerified': False}
 
 
@@ -114,7 +129,7 @@ def marker_body() -> dict:
 def apply(source: Path, destination: Path) -> dict:
     if os.name != 'nt':
         raise ValueError('windows-apply-only')
-    if destination.exists() or not destination.parent.is_dir() or destination.drive.upper() == 'C:':
+    if destination.exists() or destination.is_symlink() or destination.is_junction() or not destination.parent.is_dir() or destination.resolve().drive.upper() == 'C:':
         raise ValueError('new-non-system-destination-required')
     if destination.resolve().is_relative_to(source.resolve()) or source.resolve().is_relative_to(destination.resolve()):
         raise ValueError('overlapping-source-destination')
@@ -124,21 +139,28 @@ def apply(source: Path, destination: Path) -> dict:
         raise ValueError('destination-disk-budget')
     replacement = patched((source/'chrome.dll').read_bytes())
     stage = Path(tempfile.mkdtemp(prefix='wayfern-policy-', dir=destination.parent))
-    for name, expected in inventory.items():
-        target = stage/name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source/name, target)
-        if digest(target) != expected:
-            raise ValueError('source-changed-during-copy')
-    (stage/'chrome.dll').write_bytes(replacement)
-    (stage/MARKER).write_text(json.dumps(marker_body(), indent=2)+'\n', encoding='utf8')
-    files = {p.relative_to(stage).as_posix(): digest(p) for p in stage.rglob('*') if p.is_file()}
-    (stage/'WAYFERN-MANIFEST.json').write_text(json.dumps({'files': files}, indent=2)+'\n', encoding='utf8')
-    result = verify(stage)
-    if destination.exists():
-        raise ValueError('destination-created-concurrently')
-    stage.rename(destination)
-    return dict(result, destination=str(destination), installedApplicationChanged=False)
+    try:
+        for name, expected in inventory.items():
+            target = stage/name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source/name, target)
+            if digest(target) != expected:
+                raise ValueError('source-changed-during-copy')
+        (stage/'chrome.dll').write_bytes(replacement)
+        (stage/MARKER).write_text(json.dumps(marker_body(), indent=2)+'\n', encoding='utf8')
+        files = {p.relative_to(stage).as_posix(): digest(p) for p in stage.rglob('*') if p.is_file()}
+        (stage/'WAYFERN-MANIFEST.json').write_text(json.dumps({'files': files}, indent=2)+'\n', encoding='utf8')
+        result = verify(stage)
+        if destination.exists() or destination.is_symlink() or destination.is_junction():
+            raise ValueError('destination-created-concurrently')
+        stage.rename(destination)
+        return dict(result, destination=str(destination), installedApplicationChanged=False)
+    finally:
+        # Only the fresh staging directory created by this invocation, never
+        # destination/source or a substituted reparse point. A completed rename
+        # leaves nothing to clean; all failed copies remain unpublished.
+        if stage.exists() and not stage.is_symlink() and not stage.is_junction():
+            shutil.rmtree(stage)
 
 
 def main():

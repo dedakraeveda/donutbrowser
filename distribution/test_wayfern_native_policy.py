@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import struct
 import tempfile
@@ -105,6 +106,58 @@ class PolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(OSError):
                 p.verify(Path(tmp))
+
+    def test_missing_result_directory_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, 'regular-result'):
+                p.verify(Path(tmp)/'missing')
+
+    def test_source_resources_are_pinned_not_just_engine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'chrome.exe').write_bytes(b'exe')
+            (root/'chrome.dll').write_bytes(b'dll')
+            inventory = {n: p.digest(root/n) for n in ['chrome.exe', 'chrome.dll']}
+            with patch.object(p, 'EXE_SHA256', inventory['chrome.exe']), patch.object(p, 'BASELINE_SHA256', inventory['chrome.dll']), patch.object(p, 'ORIGINAL_FILES', inventory):
+                self.assertEqual(p.source_inventory(root), inventory)
+                (root/'unexpected.txt').write_text('must not ship')
+                with self.assertRaisesRegex(ValueError, 'original-resource'):
+                    p.source_inventory(root)
+
+    def test_rewritten_manifest_cannot_authorize_extra_resources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'chrome.exe').write_bytes(b'exe')
+            (root/'chrome.dll').write_bytes(b'dll')
+            inventory = {n: p.digest(root/n) for n in ['chrome.exe', 'chrome.dll']}
+            with patch.object(p, 'EXE_SHA256', inventory['chrome.exe']), patch.object(p, 'OUTPUT_SHA256', inventory['chrome.dll']), patch.object(p, 'ORIGINAL_FILES', inventory):
+                (root/p.MARKER).write_text(json.dumps(p.marker_body()))
+                def save_manifest():
+                    files = {f.name: p.digest(f) for f in root.iterdir() if f.name != 'WAYFERN-MANIFEST.json'}
+                    (root/'WAYFERN-MANIFEST.json').write_text(json.dumps({'files': files}))
+                save_manifest()
+                self.assertTrue(p.verify(root)['ok'])
+                (root/'unexpected.txt').write_text('not reviewed')
+                save_manifest()
+                with self.assertRaisesRegex(ValueError, 'result-resource'):
+                    p.verify(root)
+
+    def test_failed_apply_cleans_only_own_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root/'source'
+            source.mkdir()
+            (source/'chrome.dll').write_bytes(b'fixture')
+            destination = root/'new-output'
+            sentinel = root/'keep.txt'
+            sentinel.write_text('untouched')
+            with patch.object(p.os, 'name', 'nt'), patch.object(p, 'source_inventory', return_value={'chrome.dll':'unused'}), patch.object(p, 'patched', return_value=b'result'), patch.object(p.shutil, 'disk_usage', return_value=shutil.disk_usage(root)._replace(free=100*2**30)), patch.object(p.shutil, 'copy2', side_effect=OSError('simulated copy failure')):
+                with self.assertRaisesRegex(OSError, 'simulated'):
+                    p.apply(source, destination)
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(root.glob('wayfern-policy-*')), [])
+            self.assertEqual(sentinel.read_text(), 'untouched')
+            self.assertEqual((source/'chrome.dll').read_bytes(), b'fixture')
 
 
 if __name__ == '__main__':
