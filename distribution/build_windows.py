@@ -45,9 +45,21 @@ def build(args):
                NEXT_TELEMETRY_DISABLED='1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD='1',
                npm_config_cache=str(work / 'npm-cache'), PNPM_HOME=str(work / 'pnpm-home'))
 
+    stage = 0
+
     def run(command):
-        subprocess.run([str(p) for p in command], cwd=source, env=env, check=True,
-                       creationflags=subprocess.CREATE_NO_WINDOW)
+        nonlocal stage
+        stage += 1
+        log = work / ('stage-' + str(stage) + '.log')
+        print('RUN', stage, str(command[0]), flush=True)
+        with log.open('w', encoding='utf-8') as stream:
+            result = subprocess.run([str(p) for p in command], cwd=source, env=env,
+                                    stdout=stream, stderr=subprocess.STDOUT,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+        lines = log.read_text(encoding='utf-8', errors='replace').splitlines()
+        print('\n'.join(lines[-80:] if result.returncode else lines[-8:]), flush=True)
+        if result.returncode:
+            raise RuntimeError('Native build stage failed: ' + str(stage) + '; see stage log')
         if shutil.disk_usage(system).free < 20 * 2**30:
             raise RuntimeError('System disk budget reached; stop before next stage')
 

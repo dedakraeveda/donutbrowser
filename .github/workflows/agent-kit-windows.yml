@@ -38,6 +38,14 @@ jobs:
           python distribution/build_windows.py \
             --work "$RUNNER_TEMP/donut-kit-windows-work" \
             --output "$RUNNER_TEMP/donut-kit-windows-output"
+      - name: Keep failed-stage diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Donut-windows-build-diagnostics
+          path: ${{ runner.temp }}/donut-kit-windows-work/*.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload manager-only build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
