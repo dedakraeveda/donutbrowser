@@ -95,6 +95,15 @@ impl WayfernTermsManager {
     timestamp >= MIN_VALID_TIMESTAMP
   }
 
+  /// Standalone CBrowser does not use Wayfern or its acceptance marker.
+  /// Wayfern's own launch path must still enforce is_terms_accepted().
+  pub fn local_automation_ready(&self) -> bool {
+    local_automation_ready_for(
+      crate::cbrowser_manager::is_available(),
+      self.is_terms_accepted(),
+    )
+  }
+
   pub fn is_wayfern_downloaded(&self) -> bool {
     let registry = DownloadedBrowsersRegistry::instance();
     let versions = registry.get_downloaded_versions("wayfern");
@@ -186,6 +195,10 @@ impl WayfernTermsManager {
   }
 }
 
+fn local_automation_ready_for(cbrowser_available: bool, wayfern_accepted: bool) -> bool {
+  cbrowser_available || wayfern_accepted
+}
+
 lazy_static::lazy_static! {
   static ref WAYFERN_TERMS_MANAGER: WayfernTermsManager = WayfernTermsManager::new();
 }
@@ -193,6 +206,14 @@ lazy_static::lazy_static! {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_standalone_cbrowser_automation_needs_no_wayfern_marker() {
+    assert!(local_automation_ready_for(true, false));
+    assert!(!local_automation_ready_for(false, false));
+    assert!(local_automation_ready_for(false, true));
+    assert!(local_automation_ready_for(true, true));
+  }
 
   #[test]
   fn test_license_file_path() {

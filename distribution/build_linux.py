@@ -69,8 +69,14 @@ def package(args):
                       (source / 'src-tauri/binaries/xray-LICENSE.txt', 'Xray-core-LICENSE.txt'),
                       (source / 'AUTHORIZED_FORK.md', 'AUTHORIZED_FORK.md')]:
         shutil.copy2(src, licenses / dest)
+    upstream = None
     if args.engine_root:
         engine = args.engine_root.resolve()
+        if (engine / 'ENGINE-PROVENANCE.json').is_file():
+            upstream = json.loads((engine / 'ENGINE-PROVENANCE.json').read_text(encoding='utf-8'))
+            shutil.copy2(engine / 'ENGINE-PROVENANCE.json', root / 'ENGINE-PROVENANCE.json')
+            shutil.copy2(source / 'distribution/UPSTREAM-146-AUDIT.md', docs / 'UPSTREAM-146-AUDIT.md')
+            shutil.copy2(source / 'distribution/LINUX-CANDIDATE.md', root / 'START_HERE.md')
         require_elf(engine / 'chrome')
         if any(p.name in {'Cookies', 'History', 'Login Data', 'Local State', 'Default'} for p in engine.rglob('*')):
             raise ValueError('Reject browser user data in engine distribution')
@@ -79,6 +85,7 @@ def package(args):
             assets = root / 'assets'
             assets.mkdir()
             shutil.copy2(args.geoip, assets / 'GeoLite2-City.mmdb')
+            (licenses / 'GeoLite2-NOTICE.txt').write_text('This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com . Terms: https://www.maxmind.com/en/geolite2/eula\n', encoding='utf-8')
     (licenses / 'BUILD-PLATFORM.txt').write_text(subprocess.check_output(['ldd', '--version'], text=True).splitlines()[0] + '\n' +
         'Built on Ubuntu 26.04 x86_64. This package does not bundle GTK/WebKit or claim older-glibc compatibility.\n', encoding='utf-8')
     ignored = {'.git', '.local', '.cache', 'target', 'node_modules', '.next', 'dist', 'gen', '__pycache__', 'state', 'test-results'}
@@ -89,15 +96,18 @@ def package(args):
                 path = Path(directory) / name
                 if path.is_symlink() or name.startswith('.env') and name not in {'.envrc', '.env.example'}:
                     continue
+                if path.relative_to(source).parts[:2] == ('src-tauri', 'binaries') and path.suffix not in {'.txt', '.json'}:
+                    continue
                 if path.suffix in {'.exe', '.dll', '.pdb', '.pyc', '.log', '.tsbuildinfo'} or name == 'TASK-STATE.md':
                     continue
                 archive.add(path, arcname=path.relative_to(source), recursive=False)
     details = {'platform': 'linux-x86_64-ubuntu26.04', 'cbrowserRelease': '1.33',
                'engineBundled': not args.app_only,
-               'status': 'app-only; Linux CBrowser required' if args.app_only else 'complete-engine-kit',
+               'status': 'app-only; Linux CBrowser required' if args.app_only else ('upstream-engine compatibility candidate; core not rebuilt' if upstream else 'complete-engine-kit'),
+               'engineProvenance': upstream,
                'files': {str(p.relative_to(root)): digest(p) for p in sorted(root.rglob('*')) if p.is_file()}}
     (root / 'MANIFEST.json').write_text(json.dumps(details, indent=2), encoding='utf-8')
-    suffix = '-app-only' if args.app_only else ''
+    suffix = '-app-only' if args.app_only else ('-upstream146-candidate' if upstream else '')
     artifact = release / ('Donut-Agent-Kit-CBrowser-1.33-linux-x64-ubuntu26.04' + suffix + '.tar.gz')
     with tarfile.open(artifact, 'w:gz') as archive:
         archive.add(root, arcname='Donut-Agent-Kit')

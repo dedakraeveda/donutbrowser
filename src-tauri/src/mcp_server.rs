@@ -204,7 +204,7 @@ impl McpServer {
   }
 
   pub async fn start(&self, app_handle: AppHandle) -> Result<u16, String> {
-    if !WayfernTermsManager::instance().is_terms_accepted() {
+    if !WayfernTermsManager::instance().local_automation_ready() {
       return Err(crate::backend_error("WAYFERN_TERMS_REQUIRED"));
     }
 

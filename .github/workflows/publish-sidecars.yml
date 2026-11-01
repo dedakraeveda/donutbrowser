@@ -59,6 +59,8 @@ permissions:
 
 jobs:
   build:
+    # Fork agent-kit builds must never publish to the upstream production bucket.
+    if: github.repository == 'zhom/donutbrowser'
     name: Build donut-proxy (${{ matrix.target }})
     runs-on: ${{ matrix.platform }}
     strategy:

@@ -496,6 +496,11 @@ impl BrowserRunner {
 
     // Handle Wayfern profiles using WayfernManager
     if profile.browser == "wayfern" {
+      // A CBrowser-only manager may expose automation without a Wayfern marker,
+      // but selecting Wayfern still requires its own legitimate acceptance.
+      if !crate::wayfern_terms::WayfernTermsManager::instance().is_terms_accepted() {
+        return Err(crate::backend_error("WAYFERN_TERMS_REQUIRED").into());
+      }
       // Get or create wayfern config
       let mut wayfern_config = profile.wayfern_config.clone().unwrap_or_else(|| {
         log::info!(

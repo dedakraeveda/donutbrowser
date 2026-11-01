@@ -181,7 +181,10 @@ pub fn resolve_binary_path() -> Option<(PathBuf, &'static str)> {
     let version = selected_version.unwrap_or_else(|| DEFAULT_BUNDLED_VERSION.to_string());
     // Fork release labels are separate from Chromium's cache/protocol version.
     let version = if version == CBROWSER_RELEASE {
-      include_str!("../../146_Cl.txt").lines().next().unwrap_or("")
+      include_str!("../../146_Cl.txt")
+        .lines()
+        .next()
+        .unwrap_or("")
     } else {
       &version
     };
@@ -264,10 +267,39 @@ fn process_is_running(pid: u32) -> bool {
 }
 
 fn process_matches_profile(process: &sysinfo::Process, profile_path: &str) -> bool {
-  process.cmd().iter().any(|arg| {
+  if process.cmd().iter().any(|arg| {
     let arg = arg.to_string_lossy();
     arg == profile_path || arg.strip_prefix("--user-data-dir=") == Some(profile_path)
-  })
+  }) {
+    return true;
+  }
+  #[cfg(target_os = "linux")]
+  {
+    // Some Chromium builds setproctitle() their argv into one flat string.
+    // A substring alone is ambiguous (profile prefixes and paths with spaces):
+    // require the exact profile's Chromium lock PID AND selected executable.
+    let flattened = process.cmd().len() == 1
+      && process.cmd()[0]
+        .to_string_lossy()
+        .contains(&format!("--user-data-dir={profile_path}"));
+    if flattened && singleton_lock_pid(Path::new(profile_path)) == Some(process.pid().as_u32()) {
+      let expected = resolve_binary_path().and_then(|(path, _)| path.canonicalize().ok());
+      let actual = process.exe().and_then(|path| path.canonicalize().ok());
+      return expected.is_some() && expected == actual;
+    }
+  }
+  false
+}
+
+#[cfg(target_os = "linux")]
+fn singleton_lock_pid(profile_path: &Path) -> Option<u32> {
+  let target = std::fs::read_link(profile_path.join("SingletonLock")).ok()?;
+  let name = target.file_name()?.to_str()?;
+  let (host, pid) = name.rsplit_once('-')?;
+  if host.is_empty() {
+    return None;
+  }
+  pid.parse::<u32>().ok().filter(|pid| *pid > 0)
 }
 
 fn is_browser_root(process: &sysinfo::Process) -> bool {
@@ -439,6 +471,9 @@ pub async fn launch(
     .map_err(|e| crate::backend_error_with_detail("CLOAK_LAUNCH_FAILED", e))?;
   let seed = fingerprint_seed(profile);
   args.push(format!("--fingerprint={seed}"));
+  // Match the native Mac GPU/UA rather than applying the engine's Windows default.
+  #[cfg(target_os = "macos")]
+  args.push("--fingerprint-platform=macos".to_string());
   let (geo_args, geo) = resolve_geo(proxy, seed).await?;
   args.extend(geo_args);
   if !extension_paths.is_empty() {
@@ -460,19 +495,19 @@ pub async fn launch(
     let _ = stop_pid(launcher_pid, profile_path).await;
     return Err(error);
   }
-  if geo_supervisor::supervise(
+  if let Err(reason) = geo_supervisor::supervise(
     port,
     geo.latitude,
     geo.longitude,
     profile_path.to_path_buf(),
   )
   .await
-  .is_err()
   {
     let _ = stop_pid(launcher_pid, profile_path).await;
+    // The supervisor only returns fixed stage labels, never raw CDP/page data.
     return Err(crate::backend_error_with_detail(
       "CLOAK_LAUNCH_FAILED",
-      "Geolocation initialization failed",
+      reason,
     ));
   }
   let profile_path_string = profile_path.to_string_lossy();
@@ -574,6 +609,25 @@ pub async fn open_url(profile_path: &Path, url: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[cfg(target_os = "linux")]
+  #[test]
+  fn singleton_pid_requires_exact_profile_symlink_not_plaintext_or_prefix() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir().unwrap();
+    let profile = temp.path().join("profile with spaces");
+    std::fs::create_dir(&profile).unwrap();
+    assert_eq!(singleton_lock_pid(&profile), None);
+    std::fs::write(profile.join("SingletonLock"), "host-123").unwrap();
+    assert_eq!(singleton_lock_pid(&profile), None);
+    std::fs::remove_file(profile.join("SingletonLock")).unwrap();
+    symlink("test-host-123", profile.join("SingletonLock")).unwrap();
+    assert_eq!(singleton_lock_pid(&profile), Some(123));
+    assert_eq!(singleton_lock_pid(temp.path()), None);
+    std::fs::remove_file(profile.join("SingletonLock")).unwrap();
+    symlink("test-host-0", profile.join("SingletonLock")).unwrap();
+    assert_eq!(singleton_lock_pid(&profile), None);
+  }
 
   #[test]
   fn fingerprint_seed_is_stable_and_in_documented_range() {

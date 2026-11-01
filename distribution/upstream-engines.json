@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repository": "https://github.com/CloakHQ/CloakBrowser",
+    "commit": "7e626ee7a1b0e72ab2c9b98315c36302148df1ce",
+    "tag": "chromium-v146.0.7680.177.5",
+    "sourceArchiveUrl": "https://codeload.github.com/CloakHQ/CloakBrowser/zip/7e626ee7a1b0e72ab2c9b98315c36302148df1ce",
+    "sourceArchiveSha256": "969f24aa3e6397441e9aea78a1fffedaf218d256fd5e124ad69e3b3c377772d5",
+    "scope": "MIT Python/JavaScript wrapper; no Chromium C++ core or patchset"
+  },
+  "platforms": {
+    "linux-x64": {
+      "version": "146.0.7680.177.5",
+      "url": "https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.5/cloakbrowser-linux-x64.tar.gz",
+      "sha256": "4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e",
+      "executable": "chrome"
+    },
+    "darwin-arm64": {
+      "version": "145.0.7632.109.2",
+      "url": "https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v145.0.7632.109.2/cloakbrowser-darwin-arm64.tar.gz",
+      "sha256": "505582aa1bd3971c577f70e0cbbe016431702bdb693529abfd943b5bd9120c1c",
+      "executable": "Chromium.app/Contents/MacOS/Chromium"
+    },
+    "darwin-x64": {
+      "version": "145.0.7632.109.2",
+      "url": "https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v145.0.7632.109.2/cloakbrowser-darwin-x64.tar.gz",
+      "sha256": "a0a061b1945db55b3bbe95986a82b67803311c0fedabb3946e7ab0172273daac",
+      "executable": "Chromium.app/Contents/MacOS/Chromium"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+name: Donut Agent Kit macOS (manual candidate)
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_mode:
+        description: "app-only or explicitly attributed legacy upstream145 engine (not source-rebuilt146)"
+        required: true
+        default: app-only
+        type: choice
+        options:
+          - app-only
+          - upstream-legacy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-kit-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      ENGINE_MODE: ${{ inputs.engine_mode }}
+      NATIVE_TARGET: ${{ matrix.target }}
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - name: Checkout exact source without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Verify native Mac and existing Xcode/Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          df -h "$RUNNER_TEMP"
+          xcodebuild -version
+          xcrun --find swiftc
+          rustc --version
+          cargo --version
+          python3 --version
+      - name: Build isolated unsigned candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 distribution/build_macos.py \
+            --target "$NATIVE_TARGET" \
+            --work "$RUNNER_TEMP/donut-kit-work" \
+            --output "$RUNNER_TEMP/donut-kit-output" \
+            --engine-mode "$ENGINE_MODE"
+      - name: Upload candidate only (not a public release/deploy)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Donut-Agent-Kit-macos-${{ matrix.arch }}-${{ inputs.engine_mode }}
+          path: ${{ runner.temp }}/donut-kit-output/*
+          if-no-files-found: error
+          retention-days: 7

@@ -362,10 +362,8 @@ pub async fn start_proxy_process_with_profile(
       processes.insert(id.clone(), pid);
     }
 
-    // Update config with PID
-    let mut config_with_pid = config.clone();
-    config_with_pid.pid = Some(pid);
-    save_proxy_config(&config_with_pid)?;
+    // The worker publishes its PID together with local_url after binding.
+    // Writing this stale pre-spawn config here can erase a fast worker's ready state.
 
     // Don't wait for the child - it's detached
     drop(child);
@@ -436,11 +434,7 @@ pub async fn start_proxy_process_with_profile(
       processes.insert(id.clone(), pid);
     }
 
-    // Update config with PID
-    let mut config_with_pid = config.clone();
-    config_with_pid.pid = Some(pid);
-    save_proxy_config(&config_with_pid)?;
-
+    // Worker owns the ready-state publication; never overwrite it after spawn.
     drop(child);
   }
 

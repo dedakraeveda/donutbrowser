@@ -1446,6 +1446,9 @@ pub async fn run_proxy_server(config: ProxyConfig) -> Result<(), Box<dyn std::er
   // Update config with actual port and local_url (scheme matches the protocol
   // we serve, so the parent's readiness check and any consumer see the truth)
   let mut updated_config = config.clone();
+  // Publish PID and readiness in one worker-owned update. The parent must not
+  // race this write with its old config snapshot after spawning a fast worker.
+  updated_config.pid = Some(std::process::id());
   updated_config.local_port = Some(actual_port);
   updated_config.local_url = Some(format!(
     "{}://127.0.0.1:{}",

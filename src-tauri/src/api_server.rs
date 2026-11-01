@@ -965,7 +965,7 @@ async fn terms_check_middleware(
   next: Next,
 ) -> Result<Response, StatusCode> {
   // Check if Wayfern terms have been accepted
-  if !crate::wayfern_terms::WayfernTermsManager::instance().is_terms_accepted() {
+  if !crate::wayfern_terms::WayfernTermsManager::instance().local_automation_ready() {
     return Err(StatusCode::FORBIDDEN);
   }
 
