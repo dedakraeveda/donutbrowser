@@ -21,7 +21,9 @@ def run(args, cwd=SOURCE):
                    **({'creationflags': 0x08000000} if os.name == 'nt' else {}))
 
 
-ENV = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in ['TOKEN', 'SECRET', 'PASSWORD', 'API_KEY', 'LICENSE_KEY', 'TAURI_SIGNING_'])}
+# os.environ on Windows normalizes names to uppercase; preserve that contract
+# after copying to a plain dict (the MSVC action emits mixed-case names).
+ENV = {(k.upper() if os.name == 'nt' else k): v for k, v in os.environ.items() if not any(s in k.upper() for s in ['TOKEN', 'SECRET', 'PASSWORD', 'API_KEY', 'LICENSE_KEY', 'TAURI_SIGNING_'])}
 ENV.update(CARGO_HOME=str(WORK/'cargo-home'), CARGO_TARGET_DIR=str(TARGET),
            CARGO_BUILD_JOBS='2', CARGO_INCREMENTAL='0', CARGO_PROFILE_DEV_DEBUG='0',
            RUST_MIN_STACK='16777216', RUST_TEST_THREADS='1',
@@ -34,7 +36,7 @@ for key in ['TEMP', 'TMP', 'TMPDIR']:
 ENV['DONUTBROWSER_DATA_ROOT'] = str(WORK/'unit-state/DonutBrowserDev')
 ENV['WEBVIEW2_USER_DATA_FOLDER'] = str(WORK/'unit-webview')
 if os.name == 'nt':
-    compiler = Path(ENV['VCToolsInstallDir'])/'bin/Hostx64/x64/link.exe'
+    compiler = Path(ENV['VCTOOLSINSTALLDIR'])/'bin/Hostx64/x64/link.exe'
     if not compiler.is_file():
         raise RuntimeError('Selected MSVC linker missing')
     ENV['PATH'] = str(compiler.parent)+os.pathsep+ENV['PATH']
