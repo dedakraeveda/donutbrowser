@@ -880,7 +880,7 @@
     {
       "path": "src-tauri/src/mcp_server.rs",
       "before": "c01eb1b6f3ef3f3c84281a72ba832165d4a2938a8facd58392b684f9c490c00e",
-      "after": "d67026d7287650a5ea8dfc4ce96b5ec1dc68c95165338bb1a08dfaf6699e5b10"
+      "after": "1006830544c64f04ea4102181e3269836937ab7aca53a8badb491f6b519da863"
     },
     {
       "path": "src-tauri/src/mcp_views.rs",

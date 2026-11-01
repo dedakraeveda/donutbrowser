@@ -676,7 +676,53 @@
        return Err(McpError {
          code: -32000,
          message: "Fingerprint editing requires a plan that includes it".to_string(),
-@@ -10319,7 +10390,7 @@
+@@ -10237,19 +10308,6 @@
+       .get("randomize_fingerprint_on_launch")
+       .and_then(|v| v.as_bool());
+ 
+-    if let Some(os_val) = os {
+-      if !CLOUD_AUTH.is_fingerprint_os_allowed(Some(os_val)).await {
+-        return Err(McpError {
+-          code: -32000,
+-          message: format!(
+-            "OS spoofing to '{}' requires an active Pro subscription",
+-            os_val
+-          ),
+-          data: None,
+-        });
+-      }
+-    }
+-
+     let profiles = ProfileManager::instance()
+       .list_profiles()
+       .map_err(|e| McpError {
+@@ -10288,6 +10346,25 @@
+         })?
+         .clone()
+     };
++
++    if let Some(os_val) = os {
++      let local_engine =
++        crate::wayfern_local_policy::for_profile(profile).map_err(|error| McpError {
++          code: -32000,
++          message: error,
++          data: None,
++        })?;
++      if !local_engine && !CLOUD_AUTH.is_fingerprint_os_allowed(Some(os_val)).await {
++        return Err(McpError {
++          code: -32000,
++          message: format!(
++            "OS spoofing to '{}' requires an active Pro subscription",
++            os_val
++          ),
++          data: None,
++        });
++      }
++    }
+ 
+     match profile.browser.as_str() {
+       "wayfern" => {
+@@ -10319,7 +10396,7 @@
        _ => {
          return Err(McpError {
            code: -32000,
@@ -685,7 +731,7 @@
            data: None,
          })
        }
-@@ -10969,10 +11040,10 @@
+@@ -10969,10 +11046,10 @@
          data: None,
        })?;
  
@@ -698,7 +744,7 @@
          data: None,
        });
      }
-@@ -11769,7 +11840,7 @@
+@@ -11769,7 +11846,7 @@
      // browser types through Vellum, which paces the keys itself, so the plan
      // below is only built for the fallback engine.
      let profile = self.get_wayfern_profile(profile_id)?;
@@ -707,7 +753,7 @@
      let humanized = engine.is_wayfern() && !instant;
  
      // PLANNED FIRST, before anything touches the page. The planner can refuse
-@@ -12163,7 +12234,7 @@
+@@ -12163,7 +12240,7 @@
  
      // Engine first, then budgets, then the page: see handle_type_text.
      let profile = self.get_wayfern_profile(profile_id)?;
@@ -716,7 +762,7 @@
      let humanized = engine.is_wayfern() && !instant;
  
      // PLANNED FIRST, before anything touches the page. The planner can refuse
-@@ -14614,10 +14685,12 @@
+@@ -14614,10 +14691,12 @@
      let sessionless = McpCaller {
        session: None,
        toolsets: None,
@@ -729,7 +775,7 @@
      };
      // Deliberately complete arguments: the refusal must be about the missing
      // session, not about anything the caller forgot to send.
-@@ -16831,7 +16904,7 @@
+@@ -16831,7 +16910,7 @@
          .unwrap_or_else(|| panic!("{handler} must exist"));
        let body = &rest[..rest.find("\n  async fn ").unwrap_or(rest.len())];
        let engine = body
@@ -738,7 +784,7 @@
          .unwrap_or_else(|| panic!("{handler} must read the engine off the profile"));
        let budget = body
          .find("vellum_typing_budget(")
-@@ -17287,6 +17360,7 @@
+@@ -17287,6 +17366,7 @@
      let caller = McpCaller {
        session: Some("s"),
        toolsets: None,
@@ -746,7 +792,7 @@
      };
      for arguments in [
        serde_json::json!({}),
-@@ -17372,3 +17446,69 @@
+@@ -17372,3 +17452,69 @@
      );
    }
  }

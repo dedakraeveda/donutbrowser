@@ -10308,19 +10308,6 @@ impl McpServer {
       .get("randomize_fingerprint_on_launch")
       .and_then(|v| v.as_bool());
 
-    if let Some(os_val) = os {
-      if !CLOUD_AUTH.is_fingerprint_os_allowed(Some(os_val)).await {
-        return Err(McpError {
-          code: -32000,
-          message: format!(
-            "OS spoofing to '{}' requires an active Pro subscription",
-            os_val
-          ),
-          data: None,
-        });
-      }
-    }
-
     let profiles = ProfileManager::instance()
       .list_profiles()
       .map_err(|e| McpError {
@@ -10359,6 +10346,25 @@ impl McpServer {
         })?
         .clone()
     };
+
+    if let Some(os_val) = os {
+      let local_engine =
+        crate::wayfern_local_policy::for_profile(profile).map_err(|error| McpError {
+          code: -32000,
+          message: error,
+          data: None,
+        })?;
+      if !local_engine && !CLOUD_AUTH.is_fingerprint_os_allowed(Some(os_val)).await {
+        return Err(McpError {
+          code: -32000,
+          message: format!(
+            "OS spoofing to '{}' requires an active Pro subscription",
+            os_val
+          ),
+          data: None,
+        });
+      }
+    }
 
     match profile.browser.as_str() {
       "wayfern" => {
