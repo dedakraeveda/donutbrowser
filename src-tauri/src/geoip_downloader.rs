@@ -23,6 +23,42 @@ pub struct GeoIPDownloadProgress {
 }
 
 static DOWNLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+const MAXMIND_METADATA_MARKER: &[u8] = b"\xAB\xCD\xEFMaxMind.com";
+
+fn looks_like_maxmind_database(bytes: &[u8]) -> bool {
+  !bytes.is_empty()
+    && bytes
+      .windows(MAXMIND_METADATA_MARKER.len())
+      .any(|window| window == MAXMIND_METADATA_MARKER)
+}
+
+async fn install_validated_mmdb(temp_path: &PathBuf, mmdb_path: &PathBuf) -> Result<(), String> {
+  let bytes = fs::read(temp_path)
+    .await
+    .map_err(|e| format!("Failed to validate downloaded GeoIP database: {e}"))?;
+  if !looks_like_maxmind_database(&bytes) {
+    let _ = fs::remove_file(temp_path).await;
+    return Err("Downloaded GeoIP file is not a valid MaxMind database".to_string());
+  }
+
+  let previous_path = mmdb_path.with_extension("mmdb.previous");
+  let _ = fs::remove_file(&previous_path).await;
+  let had_current = fs::metadata(mmdb_path).await.is_ok();
+  if had_current {
+    fs::rename(mmdb_path, &previous_path)
+      .await
+      .map_err(|e| format!("Failed to preserve previous GeoIP database: {e}"))?;
+  }
+
+  if let Err(error) = fs::rename(temp_path, mmdb_path).await {
+    if had_current {
+      let _ = fs::rename(&previous_path, mmdb_path).await;
+    }
+    return Err(format!("Failed to install GeoIP database: {error}"));
+  }
+
+  Ok(())
+}
 
 pub struct GeoIPDownloader {
   client: Client,
@@ -77,8 +113,10 @@ impl GeoIPDownloader {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap_or_default()
       .as_secs();
-    const SEVEN_DAYS: u64 = 7 * 24 * 60 * 60;
-    now.saturating_sub(timestamp) > SEVEN_DAYS
+    now.saturating_sub(timestamp)
+      > crate::data_update_policy::load()
+        .geoip_refresh_interval()
+        .as_secs()
   }
 
   /// Check if GeoIP database is missing or stale for Wayfern fingerprint geo.
@@ -111,6 +149,10 @@ impl GeoIPDownloader {
     &self,
     _app_handle: &tauri::AppHandle,
   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::external_data_downloads_blocked() {
+      return Err(crate::app_auto_updater::manual_update_policy_error().into());
+    }
+
     if DOWNLOAD_IN_PROGRESS
       .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
       .is_err()
@@ -236,8 +278,9 @@ impl GeoIPDownloader {
     file.flush().await?;
     drop(file);
 
-    // Atomically replace the old database with the new one
-    fs::rename(&temp_path, &mmdb_path).await?;
+    // Validate before replacing, retain the previous known-good database, and
+    // restore it if installation fails.
+    install_validated_mmdb(&temp_path, &mmdb_path).await?;
 
     // Write download timestamp
     let timestamp_path = Self::get_timestamp_path();
@@ -339,6 +382,14 @@ mod tests {
     }
   }
 
+  #[test]
+  fn maxmind_validation_rejects_html_and_accepts_metadata_marker() {
+    assert!(!looks_like_maxmind_database(b"<html>upstream error</html>"));
+    assert!(looks_like_maxmind_database(
+      b"database payload\xAB\xCD\xEFMaxMind.com metadata"
+    ));
+  }
+
   #[tokio::test]
   async fn test_fetch_geoip_releases_success() {
     let mock_server = MockServer::start().await;
@@ -427,9 +478,9 @@ mod tests {
     std::fs::write(&timestamp_path, now.to_string()).unwrap();
     assert!(!GeoIPDownloader::is_geoip_stale());
 
-    // 8 days ago → stale
-    let eight_days_ago = now - 8 * 24 * 60 * 60;
-    std::fs::write(&timestamp_path, eight_days_ago.to_string()).unwrap();
+    // Older than the configurable 72-hour default → stale
+    let four_days_ago = now - 4 * 24 * 60 * 60;
+    std::fs::write(&timestamp_path, four_days_ago.to_string()).unwrap();
     assert!(GeoIPDownloader::is_geoip_stale());
   }
 

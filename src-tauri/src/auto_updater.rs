@@ -48,6 +48,11 @@ impl AutoUpdater {
   pub async fn check_for_updates(
     &self,
   ) -> Result<Vec<UpdateNotification>, Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+      log::info!("Browser update check blocked by authorized-fork policy");
+      return Ok(Vec::new());
+    }
+
     let mut notifications = Vec::new();
     let mut browser_versions: HashMap<String, Vec<BrowserVersionInfo>> = HashMap::new();
 
@@ -114,6 +119,11 @@ impl AutoUpdater {
   }
 
   pub async fn check_for_updates_with_progress(&self, app_handle: &tauri::AppHandle) {
+    if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+      log::info!("Browser auto-update blocked by authorized-fork policy");
+      return;
+    }
+
     log::info!("Starting auto-update check with progress...");
 
     // Browser auto-updates are always enabled — the disable_auto_updates setting
@@ -369,6 +379,10 @@ impl AutoUpdater {
     browser: &str,
     new_version: &str,
   ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+      return Err(crate::app_auto_updater::manual_update_policy_error().into());
+    }
+
     // Auto-update profile versions first
     let updated_profiles = self
       .auto_update_profile_versions(app_handle, browser, new_version)

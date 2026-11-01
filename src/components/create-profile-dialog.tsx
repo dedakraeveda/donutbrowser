@@ -1,6 +1,7 @@
 "use client";
 
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   useCallback,
   useEffect,
@@ -52,8 +53,10 @@ import { WayfernConfigForm } from "@/components/wayfern-config-form";
 import { useBrowserDownload } from "@/hooks/use-browser-download";
 import { useProxyEvents } from "@/hooks/use-proxy-events";
 import { useVpnEvents } from "@/hooks/use-vpn-events";
+import { translateBackendError } from "@/lib/backend-errors";
 import { getBrowserIcon } from "@/lib/browser-utils";
 import { DNS_BLOCKLIST_LEVELS } from "@/lib/dns-blocklist-levels";
+import { showErrorToast } from "@/lib/toast-utils";
 import { cn } from "@/lib/utils";
 import type { BrowserReleaseTypes, WayfernConfig, WayfernOS } from "@/types";
 
@@ -67,7 +70,15 @@ const getCurrentOS = (): WayfernOS => {
 
 import { RippleButton } from "./ui/ripple";
 
-type BrowserTypeString = "wayfern";
+type BrowserTypeString = "wayfern" | "cloak";
+
+interface CloakEngineStatus {
+  available: boolean;
+  path?: string;
+  source?: string;
+  version: string;
+  bundled: boolean;
+}
 
 interface CreateProfileDialogProps {
   isOpen: boolean;
@@ -97,10 +108,8 @@ interface BrowserOption {
 }
 
 const browserOptions: BrowserOption[] = [
-  {
-    value: "wayfern",
-    label: "Wayfern",
-  },
+  { value: "wayfern", label: "Wayfern" },
+  { value: "cloak", label: "CBrowser" },
 ];
 
 export function CreateProfileDialog({
@@ -114,16 +123,16 @@ export function CreateProfileDialog({
   const proxyListboxIdAntiDetect = useId();
   const proxyListboxIdRegular = useId();
   const [profileName, setProfileName] = useState("");
-  // Only Wayfern profiles can be created, so the dialog opens straight into
-  // the Wayfern config step (no browser-selection screen).
+  // Both anti-detect engines share one configuration screen; the profile stays
+  // pinned to the selected engine after creation.
   const [currentStep, setCurrentStep] = useState<
     "browser-selection" | "browser-config"
   >("browser-config");
   const [activeTab, setActiveTab] = useState("anti-detect");
 
-  // Browser selection states. Defaults to Wayfern — the only creatable browser.
+  // Default new profiles to CBrowser; existing profiles retain their engine.
   const [selectedBrowser, setSelectedBrowser] =
-    useState<BrowserTypeString>("wayfern");
+    useState<BrowserTypeString>("cloak");
   const [selectedProxyId, setSelectedProxyId] = useState<string>();
   const [proxyPopoverOpen, setProxyPopoverOpen] = useState(false);
   const [dnsBlocklist, setDnsBlocklist] = useState<string>("");
@@ -140,9 +149,9 @@ export function CreateProfileDialog({
     setCurrentStep("browser-config");
   };
 
-  // Reset the form fields without leaving the Wayfern config step.
+  // Reset new-profile fields to the default engine.
   const resetForm = () => {
-    setSelectedBrowser("wayfern");
+    setSelectedBrowser("cloak");
     setProfileName("");
     setSelectedProxyId(undefined);
     setLaunchHook("");
@@ -181,6 +190,10 @@ export function CreateProfileDialog({
         });
     }
   }, [isOpen]);
+  const [cloakStatus, setCloakStatus] = useState<CloakEngineStatus | null>(
+    null,
+  );
+  const [isChoosingCloakBinary, setIsChoosingCloakBinary] = useState(false);
   const [releaseTypes, setReleaseTypes] = useState<BrowserReleaseTypes>();
   const [isLoadingReleaseTypes, setIsLoadingReleaseTypes] = useState(false);
   const [releaseTypesError, setReleaseTypesError] = useState<string | null>(
@@ -205,6 +218,39 @@ export function CreateProfileDialog({
       console.error("Failed to load supported browsers:", error);
     }
   }, []);
+
+  const loadCloakStatus = useCallback(async () => {
+    try {
+      const status = await invoke<CloakEngineStatus>("get_cloak_engine_status");
+      setCloakStatus(status);
+      await loadDownloadedVersions("cloak");
+    } catch (error) {
+      console.error("Failed to load Cloak engine status:", error);
+      setCloakStatus(null);
+    }
+  }, [loadDownloadedVersions]);
+
+  const chooseCloakBinary = useCallback(async () => {
+    setIsChoosingCloakBinary(true);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: t("createProfile.engine.chooseCloakBinary"),
+      });
+      if (typeof selected !== "string") return;
+      const status = await invoke<CloakEngineStatus>("set_cloak_binary_path", {
+        path: selected,
+      });
+      setCloakStatus(status);
+      await loadDownloadedVersions("cloak");
+    } catch (error) {
+      console.error("Failed to configure Cloak binary:", error);
+      showErrorToast(translateBackendError(t, error));
+    } finally {
+      setIsChoosingCloakBinary(false);
+    }
+  }, [loadDownloadedVersions, t]);
 
   const checkAndDownloadGeoIPDatabase = useCallback(async () => {
     try {
@@ -286,6 +332,7 @@ export function CreateProfileDialog({
   useEffect(() => {
     if (isOpen) {
       void loadSupportedBrowsers();
+      void loadCloakStatus();
       // Load downloaded Wayfern versions up front so the availability gate is accurate.
       void loadDownloadedVersions("wayfern");
       // Load release types when a browser is selected
@@ -300,6 +347,7 @@ export function CreateProfileDialog({
   }, [
     isOpen,
     loadSupportedBrowsers,
+    loadCloakStatus,
     loadReleaseTypes,
     loadDownloadedVersions,
     checkAndDownloadGeoIPDatabase,
@@ -393,64 +441,31 @@ export function CreateProfileDialog({
         ? password
         : undefined;
     try {
-      if (activeTab === "anti-detect") {
-        // Only Wayfern anti-detect profiles are created.
-        const bestWayfernVersion = getCreatableVersion("wayfern");
-        if (!bestWayfernVersion) {
-          console.error("No Wayfern version available");
-          return;
-        }
-
-        // The fingerprint will be generated at launch time by the Rust backend
-        const finalWayfernConfig = { ...wayfernConfig };
-
-        await onCreateProfile({
-          name: profileName.trim(),
-          browserStr: "wayfern" as BrowserTypeString,
-          version: bestWayfernVersion.version,
-          releaseType: bestWayfernVersion.releaseType,
-          proxyId: resolvedProxyId,
-          vpnId: resolvedVpnId,
-          wayfernConfig: finalWayfernConfig,
-          groupId:
-            selectedGroupId && selectedGroupId !== "__all__"
-              ? selectedGroupId
-              : undefined,
-          extensionGroupId: selectedExtensionGroupId,
-          ephemeral,
-          dnsBlocklist: dnsBlocklist || undefined,
-          launchHook: launchHook.trim() || undefined,
-          password: passwordToSet,
-        });
-      } else {
-        // Regular browser
-        if (!selectedBrowser) {
-          console.error("Missing required browser selection");
-          return;
-        }
-
-        // Use the latest available Wayfern version
-        const bestVersion = getCreatableVersion(selectedBrowser);
-        if (!bestVersion) {
-          console.error("No version available");
-          return;
-        }
-
-        await onCreateProfile({
-          name: profileName.trim(),
-          browserStr: selectedBrowser,
-          version: bestVersion.version,
-          releaseType: bestVersion.releaseType,
-          proxyId: selectedProxyId,
-          groupId:
-            selectedGroupId && selectedGroupId !== "__all__"
-              ? selectedGroupId
-              : undefined,
-          dnsBlocklist: dnsBlocklist || undefined,
-          launchHook: launchHook.trim() || undefined,
-          password: passwordToSet,
-        });
+      const bestVersion = getCreatableVersion(selectedBrowser);
+      if (!bestVersion) {
+        console.error("No configured browser engine is available");
+        return;
       }
+
+      await onCreateProfile({
+        name: profileName.trim(),
+        browserStr: selectedBrowser,
+        version: bestVersion.version,
+        releaseType: bestVersion.releaseType,
+        proxyId: resolvedProxyId,
+        vpnId: resolvedVpnId,
+        wayfernConfig:
+          selectedBrowser === "wayfern" ? { ...wayfernConfig } : undefined,
+        groupId:
+          selectedGroupId && selectedGroupId !== "__all__"
+            ? selectedGroupId
+            : undefined,
+        extensionGroupId: selectedExtensionGroupId,
+        ephemeral,
+        dnsBlocklist: dnsBlocklist || undefined,
+        launchHook: launchHook.trim() || undefined,
+        password: passwordToSet,
+      });
 
       handleClose();
     } catch (error) {
@@ -464,11 +479,11 @@ export function CreateProfileDialog({
     // Cancel any ongoing loading
     loadingBrowserRef.current = null;
 
-    // Reset all states. Stay on the Wayfern config step.
+    // Reset all states, including the default engine for the next profile.
     setProfileName("");
     setCurrentStep("browser-config");
     setActiveTab("anti-detect");
-    setSelectedBrowser("wayfern");
+    setSelectedBrowser("cloak");
     setSelectedProxyId(undefined);
     setLaunchHook("");
     setReleaseTypes({});
@@ -533,7 +548,10 @@ export function CreateProfileDialog({
             {currentStep === "browser-selection"
               ? t("createProfile.title")
               : t("createProfile.configureTitle", {
-                  browser: t("createProfile.chromiumLabel"),
+                  browser:
+                    selectedBrowser === "wayfern"
+                      ? t("createProfile.engine.wayfern")
+                      : t("createProfile.engine.cloak"),
                 })}
           </DialogTitle>
         </DialogHeader>
@@ -643,6 +661,36 @@ export function CreateProfileDialog({
                     <TabsContent value="anti-detect" className="mt-0">
                       {/* Anti-Detect Configuration */}
                       <div className="space-y-6">
+                        <div className="space-y-2">
+                          <Label htmlFor="profile-engine">
+                            {t("createProfile.engine.label")}
+                          </Label>
+                          <Select
+                            value={selectedBrowser}
+                            onValueChange={(value) => {
+                              setSelectedBrowser(value as BrowserTypeString);
+                            }}
+                            disabled={isCreating}
+                          >
+                            <SelectTrigger id="profile-engine">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="wayfern">
+                                {t("createProfile.engine.wayfern")}
+                              </SelectItem>
+                              <SelectItem value="cloak">
+                                {t("createProfile.engine.cloak")}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-sm text-muted-foreground">
+                            {selectedBrowser === "wayfern"
+                              ? t("createProfile.engine.wayfernDescription")
+                              : t("createProfile.engine.cloakDescription")}
+                          </p>
+                        </div>
+
                         {/* Profile Name */}
                         <div className="space-y-2">
                           <Label htmlFor="profile-name">
@@ -895,9 +943,35 @@ export function CreateProfileDialog({
                             />
                           </div>
                         ) : (
-                          // Regular Browser Configuration (should not happen in the anti-detect tab).
                           <div className="space-y-4">
-                            {selectedBrowser && (
+                            <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+                              <p className="text-sm text-muted-foreground">
+                                {cloakStatus?.available
+                                  ? t("createProfile.engine.cloakBinaryReady")
+                                  : t(
+                                      "createProfile.engine.cloakBinaryMissing",
+                                    )}
+                              </p>
+                              {cloakStatus?.path && (
+                                <p className="break-all font-mono text-xs text-muted-foreground">
+                                  {cloakStatus.path}
+                                </p>
+                              )}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <LoadingButton
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  isLoading={isChoosingCloakBinary}
+                                  onClick={() => {
+                                    void chooseCloakBinary();
+                                  }}
+                                >
+                                  {t("createProfile.engine.chooseCloakBinary")}
+                                </LoadingButton>
+                              </div>
+                            </div>
+                            {selectedBrowser && cloakStatus?.available && (
                               <div className="space-y-3">
                                 {isLoadingReleaseTypes && (
                                   <div className="flex items-center gap-3">

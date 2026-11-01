@@ -50,6 +50,7 @@ export type BackendErrorCode =
   | "UPDATE_CHECKSUM_MISMATCH"
   | "UPDATE_PROFILES_RUNNING"
   | "UPDATE_PREPARATION_FAILED"
+  | "UPDATES_MANAGED_BY_AGENT"
   | "PROFILE_NAME_EXISTS"
   | "IMPORT_SOURCE_NOT_FOUND"
   | "IMPORT_SOURCE_NOT_CHROMIUM"
@@ -114,6 +115,7 @@ export type BackendErrorCode =
   | "COOKIE_BOT_ENCRYPTED_SYNC_UNSUPPORTED"
   | "COOKIE_BOT_UNKNOWN_PLATFORM"
   | "COOKIE_BOT_UNSUPPORTED_PLATFORM"
+  | "COOKIE_BOT_UNSUPPORTED_ENGINE"
   | "COOKIE_BOT_REQUIRES_EXIT_NODE"
   // The profile HAS an exit, but only this machine can reach it (127.0.0.1, a
   // LAN address, a `.local` name). Its own code because the fix is different:
@@ -143,6 +145,11 @@ export type BackendErrorCode =
   // session cannot apply one. Distinct from the generic apply failure because
   // signing in again is the fix; `detail` names the claimed OS.
   | "WAYFERN_CROSS_OS_REQUIRES_PLAN"
+  | "CLOAK_BINARY_INVALID"
+  | "CLOAK_BINARY_NOT_CONFIGURED"
+  | "CLOAK_LAUNCH_FAILED"
+  | "CLOAK_CDP_UNAVAILABLE"
+  | "CLOAK_STOP_FAILED"
   | "LAUNCH_CONSENT_EXPIRED"
   | "VPN_WORKER_START_FAILED"
   | "EXIT_PROBE_FAILED"
@@ -291,6 +298,8 @@ export function translateBackendError(t: TFunction, err: unknown): string {
       return t("backendErrors.updateProfilesRunning");
     case "UPDATE_PREPARATION_FAILED":
       return t("backendErrors.updatePreparationFailed");
+    case "UPDATES_MANAGED_BY_AGENT":
+      return t("backendErrors.updatesManagedByAgent");
     case "PROFILE_NAME_EXISTS":
       return t("backendErrors.profileNameExists", {
         name: parsed.params?.name ?? "",
@@ -472,6 +481,8 @@ export function translateBackendError(t: TFunction, err: unknown): string {
       return t("backendErrors.cookieBotUnsupportedPlatform", {
         platform: parsed.params?.platform ?? "",
       });
+    case "COOKIE_BOT_UNSUPPORTED_ENGINE":
+      return t("backendErrors.cookieBotUnsupportedEngine");
     case "COOKIE_BOT_REQUIRES_EXIT_NODE":
     // One condition, two names: the desktop refuses it locally as
     // REQUIRES_EXIT_NODE and the server refuses it as REQUIRES_PROXY. Both
@@ -499,6 +510,20 @@ export function translateBackendError(t: TFunction, err: unknown): string {
       return t("backendErrors.wayfernGenerationLimitReached");
     case "WAYFERN_CROSS_OS_REQUIRES_PLAN":
       return t("backendErrors.wayfernCrossOsRequiresPlan", {
+        detail: parsed.params?.detail ?? "",
+      });
+    case "CLOAK_BINARY_INVALID":
+      return t("backendErrors.cloakBinaryInvalid");
+    case "CLOAK_BINARY_NOT_CONFIGURED":
+      return t("backendErrors.cloakBinaryNotConfigured");
+    case "CLOAK_LAUNCH_FAILED":
+      return t("backendErrors.cloakLaunchFailed", {
+        detail: parsed.params?.detail ?? "",
+      });
+    case "CLOAK_CDP_UNAVAILABLE":
+      return t("backendErrors.cloakCdpUnavailable");
+    case "CLOAK_STOP_FAILED":
+      return t("backendErrors.cloakStopFailed", {
         detail: parsed.params?.detail ?? "",
       });
     case "LAUNCH_CONSENT_EXPIRED":

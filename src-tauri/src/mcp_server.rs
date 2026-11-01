@@ -174,7 +174,7 @@ impl McpServer {
   }
 
   /// Gate an MCP tool on a capability the caller already resolved (e.g.
-  /// `CLOUD_AUTH.can_use_browser_automation().await`). Logs the rejected gate
+  /// `crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await`). Logs the rejected gate
   /// with enough state for support to diagnose, without leaking secrets.
   async fn require_capability(feature: &str, allowed: bool) -> Result<(), McpError> {
     if !allowed {
@@ -576,7 +576,7 @@ impl McpServer {
     vec![
       McpTool {
         name: "list_profiles".to_string(),
-        description: "List all Wayfern browser profiles".to_string(),
+        description: "List all locally supported Wayfern and Cloak browser profiles".to_string(),
         input_schema: serde_json::json!({
           "type": "object",
           "properties": {},
@@ -683,7 +683,7 @@ impl McpServer {
             },
             "browser": {
               "type": "string",
-              "enum": ["wayfern"],
+              "enum": ["wayfern", "cloak"],
               "description": "Browser engine to use"
             },
             "proxy_id": {
@@ -1525,6 +1525,20 @@ impl McpServer {
       },
       // Browser interaction tools
       McpTool {
+        name: "list_tabs".to_string(),
+        description: "List live page tabs for a running local or remote profile. Use the returned page_id with page tools; do not guess the first tab.".to_string(),
+        input_schema: serde_json::json!({
+          "type": "object",
+          "properties": {
+            "profile_id": {
+              "type": "string",
+              "description": "The UUID of the running local or remote profile"
+            }
+          },
+          "required": ["profile_id"]
+        }),
+      },
+      McpTool {
         name: "navigate".to_string(),
         description: "Navigate a running browser profile to a URL. Waits for the page to fully load before returning.".to_string(),
         input_schema: serde_json::json!({
@@ -1533,6 +1547,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             },
             "url": {
               "type": "string",
@@ -1552,6 +1570,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             },
             "format": {
               "type": "string",
@@ -1582,6 +1604,10 @@ impl McpServer {
               "type": "string",
               "description": "The UUID of the running profile"
             },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
+            },
             "expression": {
               "type": "string",
               "description": "JavaScript expression to evaluate"
@@ -1608,6 +1634,10 @@ impl McpServer {
               "type": "string",
               "description": "The UUID of the running profile"
             },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
+            },
             "selector": {
               "type": "string",
               "description": "CSS selector for the element to click"
@@ -1625,6 +1655,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             },
             "selector": {
               "type": "string",
@@ -1662,6 +1696,10 @@ impl McpServer {
               "type": "string",
               "description": "The UUID of the running profile"
             },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
+            },
             "format": {
               "type": "string",
               "enum": ["html", "text"],
@@ -1685,6 +1723,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             }
           },
           "required": ["profile_id"]
@@ -1699,6 +1741,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             },
             "max_chars": {
               "type": "integer",
@@ -1718,6 +1764,10 @@ impl McpServer {
               "type": "string",
               "description": "The UUID of the running profile"
             },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
+            },
             "index": {
               "type": "integer",
               "description": "Zero-based index from the last get_interactive_elements response"
@@ -1735,6 +1785,10 @@ impl McpServer {
             "profile_id": {
               "type": "string",
               "description": "The UUID of the running profile"
+            },
+            "page_id": {
+              "type": "string",
+              "description": "Optional page target id from list_tabs"
             },
             "index": {
               "type": "integer",
@@ -2200,7 +2254,7 @@ impl McpServer {
       "run_profile" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_run_profile(arguments).await
@@ -2208,7 +2262,7 @@ impl McpServer {
       "kill_profile" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_kill_profile(arguments).await
@@ -2216,7 +2270,7 @@ impl McpServer {
       "batch_run_profiles" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_batch_run_profiles(arguments).await
@@ -2224,7 +2278,7 @@ impl McpServer {
       "batch_stop_profiles" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_batch_stop_profiles(arguments).await
@@ -2267,7 +2321,7 @@ impl McpServer {
       "update_profile_fingerprint" => {
         Self::require_capability(
           "Fingerprint editing",
-          CLOUD_AUTH.can_use_cross_os_fingerprints().await,
+          crate::entitlements::EntitlementsPolicy::can_edit_fingerprints().await,
         )
         .await?;
         self.handle_update_profile_fingerprint(arguments).await
@@ -2305,7 +2359,7 @@ impl McpServer {
       "start_sync_session" => {
         Self::require_capability(
           "Synchronizer",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_start_sync_session(arguments).await
@@ -2314,10 +2368,18 @@ impl McpServer {
       "get_sync_sessions" => self.handle_get_sync_sessions().await,
       "remove_sync_follower" => self.handle_remove_sync_follower(arguments).await,
       // Browser interaction tools (require paid subscription)
+      "list_tabs" => {
+        Self::require_capability(
+          "Browser automation",
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+        )
+        .await?;
+        self.handle_list_tabs(arguments).await
+      }
       "navigate" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_navigate(arguments).await
@@ -2325,7 +2387,7 @@ impl McpServer {
       "screenshot" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_screenshot(arguments).await
@@ -2333,7 +2395,7 @@ impl McpServer {
       "evaluate_javascript" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_evaluate_javascript(arguments).await
@@ -2341,7 +2403,7 @@ impl McpServer {
       "click_element" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_click_element(arguments).await
@@ -2349,7 +2411,7 @@ impl McpServer {
       "type_text" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_type_text(arguments).await
@@ -2357,7 +2419,7 @@ impl McpServer {
       "get_page_content" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_get_page_content(arguments).await
@@ -2365,7 +2427,7 @@ impl McpServer {
       "get_page_info" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_get_page_info(arguments).await
@@ -2373,7 +2435,7 @@ impl McpServer {
       "get_interactive_elements" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_get_interactive_elements(arguments).await
@@ -2381,7 +2443,7 @@ impl McpServer {
       "click_by_index" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_click_by_index(arguments).await
@@ -2389,7 +2451,7 @@ impl McpServer {
       "type_by_index" => {
         Self::require_capability(
           "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
         )
         .await?;
         self.handle_type_by_index(arguments).await
@@ -2398,8 +2460,8 @@ impl McpServer {
       // is gated exactly like the local launch it replaces.
       "run_profile_remote" => {
         Self::require_capability(
-          "Browser automation",
-          CLOUD_AUTH.can_use_browser_automation().await,
+          "Remote browser automation",
+          crate::entitlements::EntitlementsPolicy::can_use_remote_automation().await,
         )
         .await?;
         self.handle_run_profile_remote(arguments).await
@@ -2425,7 +2487,11 @@ impl McpServer {
         // The Cookie Bot, NOT browser automation. Solo pays for the bot and has
         // no automation; gating this on automation refused a Solo customer the
         // feature their plan is sold on while their scheduled runs kept firing.
-        Self::require_capability("Cookie Bot", CLOUD_AUTH.can_use_cookie_bot().await).await?;
+        Self::require_capability(
+          "Cookie Bot",
+          crate::entitlements::EntitlementsPolicy::can_use_cookie_bot().await,
+        )
+        .await?;
         Self::handle_run_cookie_bot_now(arguments).await
       }
       // No capability gate on the cancel. A lapsed plan must never be the
@@ -2448,9 +2514,10 @@ impl McpServer {
         message: format!("Failed to list profiles: {e}"),
       })?;
 
-    // Filter to only Wayfern profiles
-    let filtered: Vec<&BrowserProfile> =
-      profiles.iter().filter(|p| p.browser == "wayfern").collect();
+    let filtered: Vec<&BrowserProfile> = profiles
+      .iter()
+      .filter(|profile| crate::browser::BrowserType::supports_local_automation(&profile.browser))
+      .collect();
 
     Ok(serde_json::json!({
       "content": [{
@@ -2487,11 +2554,10 @@ impl McpServer {
         message: format!("Profile not found: {profile_id}"),
       })?;
 
-    // Check if it's a Wayfern profile
-    if profile.browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
       return Err(McpError {
         code: -32000,
-        message: "MCP only supports Wayfern profiles".to_string(),
+        message: "MCP supports Wayfern and Cloak profiles".to_string(),
       });
     }
 
@@ -2510,7 +2576,7 @@ impl McpServer {
     // Launching profiles programmatically requires the automation capability.
     Self::require_capability(
       "Launching a profile",
-      CLOUD_AUTH.can_use_browser_automation().await,
+      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
     )
     .await?;
 
@@ -2544,11 +2610,10 @@ impl McpServer {
         message: format!("Profile not found: {profile_id}"),
       })?;
 
-    // Check if it's a Wayfern profile
-    if profile.browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
       return Err(McpError {
         code: -32000,
-        message: "MCP only supports Wayfern profiles".to_string(),
+        message: "MCP supports Wayfern and Cloak profiles".to_string(),
       });
     }
 
@@ -2596,7 +2661,7 @@ impl McpServer {
     // Stopping profiles programmatically requires the automation capability.
     Self::require_capability(
       "Killing a profile",
-      CLOUD_AUTH.can_use_browser_automation().await,
+      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
     )
     .await?;
 
@@ -2624,11 +2689,10 @@ impl McpServer {
         message: format!("Profile not found: {profile_id}"),
       })?;
 
-    // Check if it's a Wayfern profile
-    if profile.browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
       return Err(McpError {
         code: -32000,
-        message: "MCP only supports Wayfern profiles".to_string(),
+        message: "MCP supports Wayfern and Cloak profiles".to_string(),
       });
     }
 
@@ -2664,7 +2728,7 @@ impl McpServer {
   ) -> Result<serde_json::Value, McpError> {
     Self::require_capability(
       "Batch launching profiles",
-      CLOUD_AUTH.can_use_browser_automation().await,
+      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
     )
     .await?;
 
@@ -2715,9 +2779,9 @@ impl McpServer {
         lines.push(format!("{profile_id}: not found"));
         continue;
       };
-      if profile.browser != "wayfern" {
+      if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
         lines.push(format!(
-          "{profile_id}: unsupported browser (MCP supports Wayfern)"
+          "{profile_id}: unsupported browser (MCP supports Wayfern and Cloak)"
         ));
         continue;
       }
@@ -2755,7 +2819,7 @@ impl McpServer {
   ) -> Result<serde_json::Value, McpError> {
     Self::require_capability(
       "Batch stopping profiles",
-      CLOUD_AUTH.can_use_browser_automation().await,
+      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
     )
     .await?;
 
@@ -2838,10 +2902,10 @@ impl McpServer {
         message: "Missing browser".to_string(),
       })?;
 
-    if browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(browser) {
       return Err(McpError {
         code: -32602,
-        message: "browser must be 'wayfern'".to_string(),
+        message: "browser must be 'wayfern' or 'cloak'".to_string(),
       });
     }
 
@@ -3141,11 +3205,10 @@ impl McpServer {
         message: format!("Profile not found: {profile_id}"),
       })?;
 
-    // Check if it's a Wayfern profile
-    if profile.browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
       return Err(McpError {
         code: -32000,
-        message: "MCP only supports Wayfern profiles".to_string(),
+        message: "MCP supports Wayfern and Cloak profiles".to_string(),
       });
     }
 
@@ -4252,10 +4315,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.can_use_cross_os_fingerprints().await {
+    if !crate::entitlements::EntitlementsPolicy::can_edit_fingerprints().await {
       return Err(McpError {
         code: -32000,
-        message: "Fingerprint editing requires a plan that includes it".to_string(),
+        message: "Fingerprint editing requires local features or an eligible plan".to_string(),
       });
     }
 
@@ -4274,11 +4337,11 @@ impl McpServer {
       .and_then(|v| v.as_bool());
 
     if let Some(os_val) = os {
-      if !CLOUD_AUTH.is_fingerprint_os_allowed(Some(os_val)).await {
+      if !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(Some(os_val)).await {
         return Err(McpError {
           code: -32000,
           message: format!(
-            "OS spoofing to '{}' requires an active Pro subscription",
+            "OS spoofing to '{}' requires local features or an eligible plan",
             os_val
           ),
         });
@@ -4446,10 +4509,10 @@ impl McpServer {
   }
 
   async fn handle_list_extensions(&self) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let mgr = crate::extension_manager::EXTENSION_MANAGER.lock().unwrap();
@@ -4461,10 +4524,10 @@ impl McpServer {
   }
 
   async fn handle_list_extension_groups(&self) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let mgr = crate::extension_manager::EXTENSION_MANAGER.lock().unwrap();
@@ -4479,10 +4542,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let path = arguments
@@ -4515,10 +4578,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let extension_id = arguments
@@ -4561,10 +4624,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let name = arguments
@@ -4586,10 +4649,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let group_id = arguments
@@ -4626,10 +4689,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let (group_id, extension_id) = Self::group_and_extension_ids(arguments)?;
@@ -4647,10 +4710,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let (group_id, extension_id) = Self::group_and_extension_ids(arguments)?;
@@ -4686,10 +4749,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let extension_id = arguments
@@ -4713,10 +4776,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let group_id = arguments
@@ -4743,10 +4806,10 @@ impl McpServer {
     &self,
     arguments: &serde_json::Value,
   ) -> Result<serde_json::Value, McpError> {
-    if !CLOUD_AUTH.has_active_paid_subscription().await {
+    if !crate::entitlements::EntitlementsPolicy::can_manage_extensions().await {
       return Err(McpError {
         code: -32000,
-        message: "Extension management requires an active Pro subscription".to_string(),
+        message: "Extension management requires local features or an eligible plan".to_string(),
       });
     }
     let profile_id = arguments
@@ -4853,14 +4916,32 @@ impl McpServer {
   /// `run-remote` is driven by exactly the tools that drive a local one. The
   /// alternative — a parallel set of remote-only tools — drifts from the local
   /// set within a release and doubles every future change.
-  async fn resolve_cdp_target(&self, profile_id: &str) -> Result<CdpTarget, McpError> {
-    let profile = self.get_wayfern_profile(profile_id)?;
-    crate::cdp_target::resolve(&profile)
+  async fn resolve_cdp_target_for(
+    &self,
+    profile_id: &str,
+    page_id: Option<&str>,
+  ) -> Result<CdpTarget, McpError> {
+    let profile = self.get_automation_profile(profile_id)?;
+    crate::cdp_target::resolve_for_page(&profile, page_id)
       .await
       .map_err(|e| McpError {
         code: -32000,
         message: e.to_string(),
       })
+  }
+
+  fn page_id(arguments: &serde_json::Value) -> Option<&str> {
+    arguments.get("page_id").and_then(|value| value.as_str())
+  }
+
+  async fn resolve_argument_target(
+    &self,
+    arguments: &serde_json::Value,
+    profile_id: &str,
+  ) -> Result<CdpTarget, McpError> {
+    self
+      .resolve_cdp_target_for(profile_id, Self::page_id(arguments))
+      .await
   }
 
   async fn send_cdp(
@@ -4970,7 +5051,7 @@ impl McpServer {
   /// it refused every remote tool call before resolution had a chance to find
   /// the session. Whether a browser exists at all is [`resolve_cdp_target`]'s
   /// answer to give, because only it can see both places one could be.
-  fn get_wayfern_profile(&self, profile_id: &str) -> Result<BrowserProfile, McpError> {
+  fn get_automation_profile(&self, profile_id: &str) -> Result<BrowserProfile, McpError> {
     let profiles = ProfileManager::instance()
       .list_profiles()
       .map_err(|e| McpError {
@@ -4986,10 +5067,10 @@ impl McpServer {
         message: format!("Profile not found: {profile_id}"),
       })?;
 
-    if profile.browser != "wayfern" {
+    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
       return Err(McpError {
         code: -32000,
-        message: "MCP only supports Wayfern profiles".to_string(),
+        message: "MCP supports Wayfern and Cloak profiles".to_string(),
       });
     }
 
@@ -4997,6 +5078,47 @@ impl McpServer {
   }
 
   // --- Browser interaction handlers ---
+
+  async fn handle_list_tabs(
+    &self,
+    arguments: &serde_json::Value,
+  ) -> Result<serde_json::Value, McpError> {
+    let profile_id = arguments
+      .get("profile_id")
+      .and_then(|v| v.as_str())
+      .ok_or_else(|| McpError {
+        code: -32602,
+        message: "Missing profile_id".to_string(),
+      })?;
+    let profile = self.get_automation_profile(profile_id)?;
+    let targets = crate::cdp_target::list_page_targets(&profile)
+      .await
+      .map_err(|e| McpError {
+        code: -32000,
+        message: e.to_string(),
+      })?;
+    let tabs: Vec<serde_json::Value> = targets
+      .into_iter()
+      .filter_map(|target| {
+        let page_id = target
+          .get("id")
+          .or_else(|| target.get("targetId"))
+          .and_then(|value| value.as_str())?;
+        Some(serde_json::json!({
+          "page_id": page_id,
+          "url": target.get("url").and_then(|v| v.as_str()).unwrap_or_default(),
+          "title": target.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
+          "type": target.get("type").and_then(|v| v.as_str()).unwrap_or("page"),
+        }))
+      })
+      .collect();
+    Ok(serde_json::json!({
+      "content": [{
+        "type": "text",
+        "text": serde_json::to_string_pretty(&tabs).unwrap_or_default()
+      }]
+    }))
+  }
 
   async fn handle_navigate(
     &self,
@@ -5017,7 +5139,7 @@ impl McpServer {
         message: "Missing url".to_string(),
       })?;
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     self
       .send_cdp_and_wait_for_load(
@@ -5057,7 +5179,7 @@ impl McpServer {
       .and_then(|v| v.as_bool())
       .unwrap_or(false);
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let mut params = serde_json::json!({ "format": format });
 
@@ -5127,7 +5249,7 @@ impl McpServer {
       .and_then(|v| v.as_bool())
       .unwrap_or(false);
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let cdp_params = serde_json::json!({
       "expression": expression,
@@ -5190,7 +5312,7 @@ impl McpServer {
         message: "Missing selector".to_string(),
       })?;
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let selector_escaped = selector.replace('\\', "\\\\").replace('\'', "\\'");
     let js = format!(
@@ -5275,7 +5397,7 @@ impl McpServer {
       .unwrap_or(false);
     let wpm = arguments.get("wpm").and_then(|v| v.as_f64());
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let selector_escaped = selector.replace('\\', "\\\\").replace('\'', "\\'");
     let focus_js = if clear_first {
@@ -5370,7 +5492,7 @@ impl McpServer {
       .map(|n| n as usize)
       .unwrap_or(40_000);
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let js = if let Some(sel) = selector {
       let sel_escaped = sel.replace('\\', "\\\\").replace('\'', "\\'");
@@ -5452,7 +5574,7 @@ impl McpServer {
         message: "Missing profile_id".to_string(),
       })?;
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let result = self
       .send_cdp(
@@ -5498,7 +5620,7 @@ impl McpServer {
       .map(|n| n as usize)
       .unwrap_or(40_000);
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     // Walk the DOM for visible, non-disabled interactive elements, label them
     // with a zero-based index, and cache the live references on
@@ -5581,7 +5703,7 @@ impl McpServer {
         message: "Missing index".to_string(),
       })?;
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     let js = format!(
       r#"(() => {{
@@ -5662,7 +5784,7 @@ impl McpServer {
       .unwrap_or(false);
     let wpm = arguments.get("wpm").and_then(|v| v.as_f64());
 
-    let target = self.resolve_cdp_target(profile_id).await?;
+    let target = self.resolve_argument_target(arguments, profile_id).await?;
 
     // Mirrors handle_type_text's focus step but resolves the element via the
     // cached index instead of a CSS selector.
@@ -6014,7 +6136,7 @@ impl McpServer {
       .get("url")
       .and_then(|v| v.as_str())
       .map(str::to_string);
-    let profile = self.get_wayfern_profile(profile_id)?;
+    let profile = self.get_automation_profile(profile_id)?;
 
     // The host pulls the profile from cloud storage, so one that has never
     // synced would launch an empty browser and push that emptiness back over
@@ -6367,6 +6489,7 @@ mod tests {
     assert!(tool_names.contains(&"get_sync_sessions"));
     assert!(tool_names.contains(&"remove_sync_follower"));
     // Browser interaction tools
+    assert!(tool_names.contains(&"list_tabs"));
     assert!(tool_names.contains(&"navigate"));
     assert!(tool_names.contains(&"screenshot"));
     assert!(tool_names.contains(&"evaluate_javascript"));
@@ -6374,6 +6497,8 @@ mod tests {
     assert!(tool_names.contains(&"type_text"));
     assert!(tool_names.contains(&"get_page_content"));
     assert!(tool_names.contains(&"get_page_info"));
+    let navigate = tools.iter().find(|tool| tool.name == "navigate").unwrap();
+    assert!(navigate.input_schema["properties"]["page_id"].is_object());
     // Remote fleet: an agent must be able to start a session, see it become
     // usable, drive it with the tools above, and stop it. Any one of those
     // missing makes remote driving unusable from MCP alone.

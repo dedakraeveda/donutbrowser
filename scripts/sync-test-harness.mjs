@@ -24,6 +24,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..");
 const CACHE_DIR = path.join(ROOT_DIR, ".cache", "sync-test");
+const MINIO_DATA_DIR = process.env.DONUT_SYNC_TEST_DATA_DIR
+  ? path.resolve(process.env.DONUT_SYNC_TEST_DATA_DIR)
+  : path.join(os.tmpdir(), "donut-sync-minio-data");
 
 const MINIO_PORT = 9876;
 const MINIO_CONSOLE_PORT = 9877;
@@ -129,14 +132,13 @@ async function ensureMinioBinary() {
 }
 
 async function startMinio(minioBin) {
-  const dataDir = path.join(CACHE_DIR, "minio-data");
-  await mkdir(dataDir, { recursive: true });
+  await mkdir(MINIO_DATA_DIR, { recursive: true });
 
   log(`Starting MinIO on port ${MINIO_PORT}...`);
 
   const proc = spawn(
     minioBin,
-    ["server", dataDir, "--address", `:${MINIO_PORT}`, "--console-address", `:${MINIO_CONSOLE_PORT}`],
+    ["server", MINIO_DATA_DIR, "--address", `:${MINIO_PORT}`, "--console-address", `:${MINIO_CONSOLE_PORT}`],
     {
       env: {
         ...process.env,
@@ -328,4 +330,3 @@ async function main() {
 }
 
 main();
-

@@ -161,6 +161,28 @@ pub fn binaries_dir() -> PathBuf {
   data_dir().join("binaries")
 }
 
+/// Existing release Wayfern installs a local debug fork may reuse in place.
+/// Never active for release, portable, test, or explicitly relocated state, so
+/// an isolated run cannot inspect or mutate the user's production app data.
+pub fn shared_release_wayfern_dir() -> Option<PathBuf> {
+  if !cfg!(debug_assertions) || state_is_relocated() {
+    return None;
+  }
+  Some(
+    base_dirs()
+      .data_local_dir()
+      .join("DonutBrowser")
+      .join("binaries")
+      .join("wayfern"),
+  )
+}
+
+pub fn shared_release_wayfern_version_dir(version: &str) -> Option<PathBuf> {
+  shared_release_wayfern_dir()
+    .map(|dir| dir.join(version))
+    .filter(|dir| dir.is_dir())
+}
+
 pub fn data_subdir() -> PathBuf {
   data_dir().join("data")
 }

@@ -75,6 +75,7 @@ interface AppSettings {
   keep_decrypted_profiles_in_ram?: boolean;
   fingerprint_gate_disabled?: boolean;
   vpn_extension_warning_disabled?: boolean;
+  cloak_binary_path?: string;
 }
 
 interface CustomThemeState {
@@ -1340,16 +1341,7 @@ export function SettingsDialog({
 
                 {!isLinux && (
                   <div className="flex items-start gap-x-3 rounded-lg border p-3">
-                    <Checkbox
-                      id="disable-auto-updates"
-                      checked={settings.disable_auto_updates ?? false}
-                      onCheckedChange={(checked) => {
-                        updateSetting(
-                          "disable_auto_updates",
-                          checked as boolean,
-                        );
-                      }}
-                    />
+                    <Checkbox id="disable-auto-updates" checked disabled />
                     <div className="space-y-1">
                       <Label
                         htmlFor="disable-auto-updates"

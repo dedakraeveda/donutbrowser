@@ -72,6 +72,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub(crate) fn manual_update_policy_error() -> String {
+  serde_json::json!({ "code": "UPDATES_MANAGED_BY_AGENT" }).to_string()
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 enum LinuxInstallationMethod {
@@ -171,6 +175,11 @@ impl AppAutoUpdater {
   pub async fn check_for_updates(
     &self,
   ) -> Result<Option<AppUpdateInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+      log::info!("App update check blocked by authorized-fork policy");
+      return Ok(None);
+    }
+
     let current_version = Self::get_current_version();
     let is_nightly = Self::is_nightly_build();
 
@@ -951,6 +960,10 @@ impl AppAutoUpdater {
     _app_handle: &tauri::AppHandle,
     update_info: &AppUpdateInfo,
   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+      return Err(manual_update_policy_error().into());
+    }
+
     log::info!("Starting background update download and install");
 
     let temp_dir = std::env::temp_dir().join("donut_app_update");
@@ -1789,6 +1802,10 @@ impl AppAutoUpdater {
 
   /// Restart the application
   async fn restart_application(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+      return Err(manual_update_policy_error().into());
+    }
+
     #[cfg(target_os = "macos")]
     {
       let app_path = self.get_current_app_path()?;
@@ -2037,6 +2054,11 @@ rm "{}"
 
 #[tauri::command]
 pub async fn check_for_app_updates() -> Result<Option<AppUpdateInfo>, String> {
+  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+    log::info!("App update check skipped: updates are managed by the agent runbook");
+    return Ok(None);
+  }
+
   #[cfg(feature = "e2e")]
   if crate::e2e_automation_enabled()
     && std::env::var_os("DONUT_E2E_DISABLE_STARTUP_NETWORK").is_some()
@@ -2071,6 +2093,10 @@ pub async fn download_and_prepare_app_update(
   app_handle: tauri::AppHandle,
   update_info: AppUpdateInfo,
 ) -> Result<(), String> {
+  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+    return Err(manual_update_policy_error());
+  }
+
   let updater = AppAutoUpdater::instance();
   updater
     .download_and_prepare_update(&app_handle, &update_info)
@@ -2089,6 +2115,10 @@ pub async fn download_and_prepare_app_update(
 
 #[tauri::command]
 pub async fn restart_application() -> Result<(), String> {
+  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+    return Err(manual_update_policy_error());
+  }
+
   let updater = AppAutoUpdater::instance();
   updater
     .restart_application()
@@ -2098,6 +2128,11 @@ pub async fn restart_application() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_for_app_updates_manual() -> Result<Option<AppUpdateInfo>, String> {
+  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
+    log::info!("Manual in-app update check skipped: use the agent update runbook");
+    return Ok(None);
+  }
+
   #[cfg(feature = "e2e")]
   if crate::e2e_automation_enabled()
     && std::env::var_os("DONUT_E2E_DISABLE_STARTUP_NETWORK").is_some()

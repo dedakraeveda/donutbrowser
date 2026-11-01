@@ -125,7 +125,7 @@ function consistencyFromErrorParams(
   };
 }
 
-type BrowserTypeString = "wayfern";
+type BrowserTypeString = "wayfern" | "cloak";
 
 interface PendingUrl {
   id: string;
@@ -286,9 +286,8 @@ export default function Home() {
   // Cloud auth for cross-OS unlock
   const { user: cloudUser } = useCloudAuth();
   const crossOsUnlocked = getEntitlements(cloudUser).crossOsFingerprints;
-  // Bulk run/stop is a paid (browser automation) feature, matching the
-  // /v1/profiles/batch/run API gate. Free/solo users see the bulk Run/Stop
-  // actions disabled with a Pro badge.
+  // Bulk run/stop follows the effective local-or-cloud automation policy,
+  // matching the /v1/profiles/batch/run API gate.
   const automationUnlocked = getEntitlements(cloudUser).browserAutomation;
   // The rail needs to show a live run from every page, so the shell subscribes
   // to the shared cookie-bot store too. It is a module singleton, so this costs
@@ -1486,7 +1485,9 @@ export default function Home() {
   const handleBulkCopyCookies = useCallback(() => {
     if (selectedProfiles.length === 0) return;
     const eligibleProfiles = profiles.filter(
-      (p) => selectedProfiles.includes(p.id) && p.browser === "wayfern",
+      (p) =>
+        selectedProfiles.includes(p.id) &&
+        (p.browser === "wayfern" || p.browser === "cloak"),
     );
     if (eligibleProfiles.length === 0) {
       showErrorToast(t("errors.cookieCopyUnsupportedBrowser"));

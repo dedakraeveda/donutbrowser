@@ -154,7 +154,7 @@ struct BrowserSource {
 }
 
 pub struct ProfileImporter {
-  base_dirs: BaseDirs,
+  base_dirs: Option<BaseDirs>,
   downloaded_browsers_registry: &'static DownloadedBrowsersRegistry,
   profile_manager: &'static ProfileManager,
   wayfern_manager: &'static crate::wayfern_manager::WayfernManager,
@@ -163,7 +163,7 @@ pub struct ProfileImporter {
 impl ProfileImporter {
   fn new() -> Self {
     Self {
-      base_dirs: BaseDirs::new().expect("Failed to get base directories"),
+      base_dirs: BaseDirs::new(),
       downloaded_browsers_registry: DownloadedBrowsersRegistry::instance(),
       profile_manager: ProfileManager::instance(),
       wayfern_manager: crate::wayfern_manager::WayfernManager::instance(),
@@ -240,14 +240,15 @@ impl ProfileImporter {
   /// user-data directory. `root_profile` marks the Opera-style quirk where the
   /// profile lives at the root of the config dir instead of `Default/`.
   fn browser_sources(&self) -> Vec<BrowserSource> {
+    let Some(base_dirs) = self.base_dirs.as_ref() else {
+      log::warn!("Base directories are unavailable; skipping automatic browser detection");
+      return Vec::new();
+    };
     let mut sources: Vec<BrowserSource> = Vec::new();
 
     #[cfg(target_os = "macos")]
     {
-      let support = self
-        .base_dirs
-        .home_dir()
-        .join("Library/Application Support");
+      let support = base_dirs.home_dir().join("Library/Application Support");
       let standard: &[(&str, &str)] = &[
         ("chromium", "Google/Chrome"),
         ("chrome-beta", "Google/Chrome Beta"),
@@ -286,7 +287,7 @@ impl ProfileImporter {
 
     #[cfg(target_os = "windows")]
     {
-      let local = self.base_dirs.data_local_dir().to_path_buf();
+      let local = base_dirs.data_local_dir().to_path_buf();
       let standard: &[(&str, &str)] = &[
         ("chromium", "Google/Chrome/User Data"),
         ("chrome-beta", "Google/Chrome Beta/User Data"),
@@ -314,7 +315,7 @@ impl ProfileImporter {
         });
       }
       // Opera keeps the profile under %APPDATA% (Roaming), not %LOCALAPPDATA%.
-      let roaming = self.base_dirs.data_dir().to_path_buf();
+      let roaming = base_dirs.data_dir().to_path_buf();
       for (key, rel) in &[
         ("opera", "Opera Software/Opera Stable"),
         ("opera-gx", "Opera Software/Opera GX Stable"),
@@ -345,7 +346,7 @@ impl ProfileImporter {
 
     #[cfg(target_os = "linux")]
     {
-      let home = self.base_dirs.home_dir().to_path_buf();
+      let home = base_dirs.home_dir().to_path_buf();
       let config = home.join(".config");
       let standard: &[(&str, &str)] = &[
         ("chromium", "google-chrome"),
@@ -677,10 +678,7 @@ impl ProfileImporter {
     // forgets the check (the REST and MCP surfaces each had their own copy)
     // would bypass the restriction with no compile error.
     let fingerprint_os = wayfern_config.as_ref().and_then(|c| c.os.as_deref());
-    if !crate::cloud_auth::CLOUD_AUTH
-      .is_fingerprint_os_allowed(fingerprint_os)
-      .await
-    {
+    if !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(fingerprint_os).await {
       return Err(
         serde_json::json!({ "code": "FINGERPRINT_REQUIRES_PRO" })
           .to_string()

@@ -126,6 +126,21 @@ impl DownloadedBrowsersRegistry {
   pub fn is_browser_downloaded(&self, browser: &str, version: &str) -> bool {
     use crate::browser::{create_browser, BrowserType};
 
+    // External Cloak binaries never enter this registry: doing so would let
+    // Donut's cleanup delete files owned by another application.
+    if browser == "cloak" && version == crate::cbrowser_manager::EXTERNAL_VERSION {
+      return crate::cbrowser_manager::is_available();
+    }
+    if browser == "wayfern" {
+      if let Ok(browser_type) = BrowserType::from_str(browser) {
+        if create_browser(browser_type)
+          .is_version_downloaded(version, &crate::app_dirs::binaries_dir())
+        {
+          return true;
+        }
+      }
+    }
+
     // First check if browser is registered
     if !self.is_browser_registered(browser, version) {
       return false;
@@ -156,12 +171,29 @@ impl DownloadedBrowsersRegistry {
   }
 
   pub fn get_downloaded_versions(&self, browser: &str) -> Vec<String> {
+    if browser == "cloak" && crate::cbrowser_manager::is_available() {
+      return vec![crate::cbrowser_manager::EXTERNAL_VERSION.to_string()];
+    }
     let data = self.data.lock().unwrap();
-    data
+    let mut versions: std::collections::HashSet<String> = data
       .browsers
       .get(browser)
       .map(|versions| versions.keys().cloned().collect())
-      .unwrap_or_default()
+      .unwrap_or_default();
+    drop(data);
+
+    if browser == "wayfern" {
+      if let Some(shared_dir) = crate::app_dirs::shared_release_wayfern_dir() {
+        if let Ok(entries) = fs::read_dir(shared_dir) {
+          for entry in entries.flatten().filter(|entry| entry.path().is_dir()) {
+            if let Some(version) = entry.file_name().to_str() {
+              versions.insert(version.to_string());
+            }
+          }
+        }
+      }
+    }
+    versions.into_iter().collect()
   }
 
   pub fn mark_download_started(&self, browser: &str, version: &str, file_path: PathBuf) {
@@ -1401,6 +1433,11 @@ mod tests {
 pub async fn ensure_active_browsers_downloaded(
   app_handle: tauri::AppHandle,
 ) -> Result<Vec<String>, String> {
+  if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+    log::info!("Proactive browser download blocked by authorized-fork policy");
+    return Ok(Vec::new());
+  }
+
   #[cfg(feature = "e2e")]
   if crate::e2e_automation_enabled()
     && std::env::var_os("DONUT_E2E_DISABLE_STARTUP_NETWORK").is_some()
@@ -1558,6 +1595,11 @@ pub async fn check_missing_binaries() -> Result<Vec<(String, String, String)>, S
 pub async fn ensure_all_binaries_exist(
   app_handle: tauri::AppHandle,
 ) -> Result<Vec<String>, String> {
+  if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+    log::info!("Proactive binary/data download blocked by authorized-fork policy");
+    return Ok(Vec::new());
+  }
+
   #[cfg(feature = "e2e")]
   if crate::e2e_automation_enabled()
     && std::env::var_os("DONUT_E2E_DISABLE_STARTUP_NETWORK").is_some()

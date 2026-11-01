@@ -436,6 +436,10 @@ pub fn get_version_updater() -> Arc<Mutex<VersionUpdater>> {
 pub async fn trigger_manual_version_update(
   app_handle: tauri::AppHandle,
 ) -> Result<Vec<BackgroundUpdateResult>, String> {
+  if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+    return Err(crate::app_auto_updater::manual_update_policy_error());
+  }
+
   let updater = get_version_updater();
   let updater_guard = updater.lock().await;
 
@@ -460,6 +464,10 @@ pub async fn get_version_update_status() -> Result<(Option<u64>, u64), String> {
 pub async fn clear_all_version_cache_and_refetch(
   app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+  if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+    return Err(crate::app_auto_updater::manual_update_policy_error());
+  }
+
   let api_client = crate::api_client::ApiClient::instance();
   let version_updater = VersionUpdater::new();
 

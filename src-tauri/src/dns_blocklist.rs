@@ -4,8 +4,6 @@ use std::time::{Duration, SystemTime};
 
 use crate::app_dirs;
 
-const REFRESH_INTERVAL: Duration = Duration::from_secs(43200); // 12 hours
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BlocklistLevel {
@@ -288,6 +286,35 @@ lazy_static::lazy_static! {
     .expect("Failed to create HTTP client");
 }
 
+fn install_fetched_blocklist(path: &PathBuf, body: &str) -> Result<usize, String> {
+  let entry_count = body
+    .lines()
+    .filter_map(normalize_domain)
+    .filter(|domain| domain.contains('.'))
+    .count();
+  if entry_count == 0 || body.trim_start().starts_with('<') {
+    return Err("Downloaded DNS blocklist contains no valid domain entries".to_string());
+  }
+
+  let tmp_path = path.with_extension("txt.downloading");
+  let previous_path = path.with_extension("txt.previous");
+  std::fs::write(&tmp_path, body).map_err(|e| format!("Failed to write blocklist: {e}"))?;
+  let _ = std::fs::remove_file(&previous_path);
+  let had_current = path.exists();
+  if had_current {
+    std::fs::rename(path, &previous_path)
+      .map_err(|e| format!("Failed to preserve previous blocklist: {e}"))?;
+  }
+  if let Err(error) = std::fs::rename(&tmp_path, path) {
+    if had_current {
+      let _ = std::fs::rename(&previous_path, path);
+    }
+    return Err(format!("Failed to install blocklist: {error}"));
+  }
+
+  Ok(entry_count)
+}
+
 impl BlocklistManager {
   pub fn instance() -> &'static BlocklistManager {
     &BLOCKLIST_MANAGER
@@ -311,7 +338,7 @@ impl BlocklistManager {
     match std::fs::metadata(&path).and_then(|m| m.modified()) {
       Ok(modified) => SystemTime::now()
         .duration_since(modified)
-        .map(|age| age < REFRESH_INTERVAL)
+        .map(|age| age < crate::data_update_policy::load().dns_refresh_interval())
         .unwrap_or(false),
       Err(_) => false,
     }
@@ -398,15 +425,9 @@ impl BlocklistManager {
       ));
     };
 
-    // Write atomically: write to temp file, then rename
-    let tmp_path = path.with_extension("tmp");
-    std::fs::write(&tmp_path, &body).map_err(|e| format!("Failed to write blocklist: {e}"))?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename blocklist: {e}"))?;
-
-    let entry_count = body
-      .lines()
-      .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-      .count();
+    // Validate before replacing, retain the previous known-good list, and
+    // restore it if installation fails.
+    let entry_count = install_fetched_blocklist(&path, &body)?;
     log::info!(
       "[dns-blocklist] Cached {} ({} domains)",
       level.display_name(),
@@ -554,7 +575,11 @@ impl BlocklistManager {
 
   pub async fn refresh_all_stale(&self) {
     for &level in BlocklistLevel::all_downloadable() {
-      if !Self::is_cache_fresh(level) {
+      // Background refresh updates only lists the user has actually selected
+      // before. A missing tier is downloaded lazily by ensure_cached on first
+      // use, avoiding a large five-tier startup/background download.
+      let is_cached = Self::cached_file_path(level).is_some_and(|path| path.exists());
+      if is_cached && !Self::is_cache_fresh(level) {
         if let Err(e) = Self::fetch_blocklist(level).await {
           log::error!(
             "[dns-blocklist] Failed to refresh {}: {e}",
@@ -572,7 +597,9 @@ impl BlocklistManager {
     }
     // Recompile the custom list too so its sources track upstream changes.
     let config = CustomDnsConfig::load();
-    if !config.sources.is_empty() || !config.block_domains.is_empty() {
+    let custom_is_stale = Self::cached_file_path(BlocklistLevel::Custom)
+      .is_none_or(|path| !path.exists() || !Self::is_cache_fresh(BlocklistLevel::Custom));
+    if custom_is_stale && (!config.sources.is_empty() || !config.block_domains.is_empty()) {
       if let Err(e) = Self::compile_custom_blocklist().await {
         log::error!("[dns-blocklist] Failed to recompile custom list: {e}");
       }
@@ -822,6 +849,25 @@ mod tests {
     assert_eq!(normalize_domain("0.0.0.0 # just a comment"), None);
     // Full-line comments stay rejected.
     assert_eq!(normalize_domain("! adblock header"), None);
+  }
+
+  #[test]
+  fn fetched_list_validation_rejects_html_and_preserves_previous() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("normal.txt");
+    std::fs::write(&path, "old.example.com\n").unwrap();
+
+    assert!(install_fetched_blocklist(&path, "<html>upstream error</html>").is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old.example.com\n");
+
+    assert_eq!(
+      install_fetched_blocklist(&path, "ads.example.com\ntracker.example.net\n").unwrap(),
+      2
+    );
+    assert_eq!(
+      std::fs::read_to_string(path.with_extension("txt.previous")).unwrap(),
+      "old.example.com\n"
+    );
   }
 
   #[test]

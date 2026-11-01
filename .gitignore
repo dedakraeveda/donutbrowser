@@ -24,6 +24,12 @@
 
 # misc
 **/*.DS_Store
+
+# machine-local external engines, binaries, caches, and credentials
+/.local/
+**/__pycache__/
+*.py[cod]
+/TASK-STATE.md
 .env.local
 .env.development.local
 .env.test.local

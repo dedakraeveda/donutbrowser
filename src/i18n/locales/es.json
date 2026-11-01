@@ -195,8 +195,8 @@
       "copyLogsSuccess": "Registros copiados al portapapeles",
       "copyLogsDescription": "Copia un paquete censurado de los registros recientes (hasta 5 MB). Revísalo antes de compartirlo, ya que la censura no puede identificar todos los tipos de datos personales."
     },
-    "disableAutoUpdates": "Desactivar Actualizaciones Automáticas de la App",
-    "disableAutoUpdatesDescription": "Evita que la aplicación busque e instale actualizaciones de Donut Browser automáticamente. Las actualizaciones de navegadores no se ven afectadas.",
+    "disableAutoUpdates": "Updates Managed by Agent",
+    "disableAutoUpdatesDescription": "App, Wayfern, and GeoIP update downloads are locked. Update this authorized fork only through the reviewed agent runbook.",
     "keepDecryptedProfilesInRam": "Mantener Perfiles Descifrados en RAM",
     "keepDecryptedProfilesInRamDescription": "Conservar la copia descifrada en RAM de los perfiles protegidos por contraseña entre lanzamientos para un inicio más rápido. La copia en disco permanece cifrada en cualquier caso.",
     "privacy": {
@@ -402,7 +402,17 @@
       "description": "Cifra los datos del perfil en disco. Necesario para abrirlo."
     },
     "downloadingSubtitle": "Descargando…",
-    "browsersDownloading": "Los navegadores aún se están descargando. La creación de perfiles estará disponible cuando termine una descarga."
+    "browsersDownloading": "Los navegadores aún se están descargando. La creación de perfiles estará disponible cuando termine una descarga.",
+    "engine": {
+      "label": "Browser engine",
+      "wayfern": "Wayfern",
+      "cloak": "CBrowser",
+      "wayfernDescription": "Donut's native anti-detect engine with editable fingerprint profiles.",
+      "cloakDescription": "Bundled CBrowser engine with a stable identity seed for each profile.",
+      "cloakBinaryMissing": "The bundled CBrowser runtime is unavailable. Restore the .local/cbrowser directory or select another compatible binary.",
+      "cloakBinaryReady": "The bundled CBrowser runtime is ready.",
+      "chooseCloakBinary": "Choose CBrowser binary"
+    }
   },
   "deleteDialog": {
     "title": "Eliminar Perfil",
@@ -1089,7 +1099,8 @@
     "refreshFingerprint": "Actualizar Huella Digital",
     "canvasNoiseSeedPlaceholder": "Introduce una semilla para la huella digital del canvas",
     "addFontsPlaceholder": "Agregar fuentes...",
-    "enterAsJson": "Ingresa {{title}} como JSON"
+    "enterAsJson": "Ingresa {{title}} como JSON",
+    "derivedFromIdentity": "Derived from this profile's identity and not editable."
   },
   "warnings": {
     "windowResizeTitle": "Dimensiones de ventana personalizadas",
@@ -1914,6 +1925,7 @@
     "proxySidecarVersionMismatch": "Algunos archivos de Donut Browser pertenecen a versiones diferentes. Reinstala la última actualización; tus perfiles permanecerán seguros.",
     "updateProfilesRunning": "Detén todos los perfiles en ejecución antes de instalar la actualización.",
     "updatePreparationFailed": "Donut Browser no pudo detener de forma segura un proceso de red en segundo plano. Reinicia el equipo y vuelve a intentar la actualización.",
+    "updatesManagedByAgent": "This fork is updated only by the agent using the reviewed update runbook.",
     "wayfernTermsRequired": "Acepta los Términos y condiciones de Wayfern antes de iniciar el servidor MCP.",
     "apiPortUnavailable": "El servidor API no pudo encontrar un puerto disponible.",
     "mcpServerAlreadyRunning": "El servidor MCP ya está en ejecución.",
@@ -1984,7 +1996,17 @@
     "noE2ePasswordSet": "No hay contraseña de cifrado de extremo a extremo. Establece una antes de sincronizar datos cifrados.",
     "importSourceNotChromium": "Esta carpeta no es un perfil de navegador Chromium",
     "importSourceNotChromiumNamed": "Los perfiles de {{family}} no se pueden importar; solo se admiten navegadores basados en Chromium",
-    "importSourceBrowserRunning": "Cierra {{browser}} primero o elige importar de todos modos"
+    "importSourceBrowserRunning": "Cierra {{browser}} primero o elige importar de todos modos",
+    "cloakBinaryInvalid": "That file is not a valid CBrowser executable.",
+    "cloakBinaryNotConfigured": "The bundled CBrowser runtime is unavailable.",
+    "cloakLaunchFailed": "CBrowser could not start: {{detail}}",
+    "cloakCdpUnavailable": "CBrowser started, but its local CDP endpoint is unavailable.",
+    "cloakStopFailed": "CBrowser could not be stopped: {{detail}}",
+    "wayfernCrossOsRequiresPlan": "This profile claims {{detail}}, which needs a paid plan and an active sign-in. Sign in or switch the profile to your own operating system.",
+    "wayfernFingerprintApplyFailed": "Could not apply this profile's fingerprint, so the browser was not started. {{detail}}",
+    "wayfernFingerprintGenerationFailed": "Could not create a fingerprint for this profile. {{detail}}",
+    "wayfernGenerationLimitReached": "The fingerprint generation limit for this account has been reached. New fingerprints are unavailable for up to 24 hours. This limit applies to this computer, not to one profile.",
+    "cookieBotUnsupportedEngine": "Cookie Bot supports Wayfern profiles only; run CBrowser profiles locally."
   },
   "rail": {
     "profiles": "Perfiles",

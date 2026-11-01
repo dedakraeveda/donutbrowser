@@ -79,6 +79,9 @@ pub enum CdpTarget {
     ws_url: String,
     bearer: String,
     session_id: String,
+    /// Optional browser target chosen by the caller. None preserves the
+    /// historical first-page behaviour used by callers without a page id.
+    page_id: Option<String>,
   },
 }
 
@@ -191,7 +194,7 @@ impl Patience {
 /// The same split covers a stale `process_id` left by a crash — nothing answers
 /// on the recorded port, so the fleet session is found instead of a dead one.
 pub async fn resolve(profile: &BrowserProfile) -> Result<CdpTarget, ResolveError> {
-  if profile.browser != "wayfern" {
+  if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
     return Err(ResolveError::Unsupported(format!(
       "Profile '{}' runs {}, which cannot be driven over CDP",
       profile.name, profile.browser
@@ -206,23 +209,26 @@ pub async fn resolve(profile: &BrowserProfile) -> Result<CdpTarget, ResolveError
     }
   }
 
-  if let Some(session) =
-    crate::remote_session::live_session_for_profile(&profile.id.to_string()).await
-  {
-    let endpoint = crate::remote_session::cdp_endpoint(&session.session_id)
-      .await
-      .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
-    let bearer = crate::remote_session::access_token_for_cdp().map_err(ResolveError::Endpoint)?;
-    log::info!(
-      "Driving profile '{}' through remote session {}",
-      profile.name,
-      session.session_id
-    );
-    return Ok(CdpTarget::Remote {
-      ws_url: endpoint.ws_url,
-      bearer,
-      session_id: session.session_id,
-    });
+  if profile.browser == "wayfern" {
+    if let Some(session) =
+      crate::remote_session::live_session_for_profile(&profile.id.to_string()).await
+    {
+      let endpoint = crate::remote_session::cdp_endpoint(&session.session_id)
+        .await
+        .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
+      let bearer = crate::remote_session::access_token_for_cdp().map_err(ResolveError::Endpoint)?;
+      log::info!(
+        "Driving profile '{}' through remote session {}",
+        profile.name,
+        session.session_id
+      );
+      return Ok(CdpTarget::Remote {
+        ws_url: endpoint.ws_url,
+        bearer,
+        session_id: session.session_id,
+        page_id: None,
+      });
+    }
   }
 
   if has_local_process {
@@ -241,10 +247,64 @@ pub async fn resolve(profile: &BrowserProfile) -> Result<CdpTarget, ResolveError
   )))
 }
 
+/// Resolve a specific page target when a caller has selected one.
+///
+/// Local CBrowser/Wayfern targets are selected from the live `/json` listing,
+/// never from a stale profile marker. Remote Wayfern targets carry the target
+/// id into the existing attach handshake. Without `page_id`, [`resolve`] keeps
+/// its backwards-compatible first-page behaviour.
+pub async fn resolve_for_page(
+  profile: &BrowserProfile,
+  page_id: Option<&str>,
+) -> Result<CdpTarget, ResolveError> {
+  let Some(page_id) = page_id else {
+    return resolve(profile).await;
+  };
+  if page_id.is_empty() || page_id.len() > 256 || page_id.chars().any(|c| c.is_control()) {
+    return Err(ResolveError::Unsupported("Invalid page id".to_string()));
+  }
+  if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+    return Err(ResolveError::Unsupported(format!(
+      "Profile '{}' runs {}, which cannot be driven over CDP",
+      profile.name, profile.browser
+    )));
+  }
+
+  if profile.process_id.is_some() {
+    if let Some(ws_url) =
+      local_page_ws_url_for_id(profile, Patience::WaitForLaunch, Some(page_id)).await
+    {
+      return Ok(CdpTarget::Local { ws_url });
+    }
+  }
+
+  if profile.browser == "wayfern" {
+    if let Some(session) =
+      crate::remote_session::live_session_for_profile(&profile.id.to_string()).await
+    {
+      let endpoint = crate::remote_session::cdp_endpoint(&session.session_id)
+        .await
+        .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
+      let bearer = crate::remote_session::access_token_for_cdp().map_err(ResolveError::Endpoint)?;
+      return Ok(CdpTarget::Remote {
+        ws_url: endpoint.ws_url,
+        bearer,
+        session_id: session.session_id,
+        page_id: Some(page_id.to_string()),
+      });
+    }
+  }
+
+  Err(ResolveError::NotRunning(format!(
+    "Page '{}' is not available in profile '{}'",
+    page_id, profile.name
+  )))
+}
+
 /// The debugging port a locally launched browser registered for this profile.
 async fn local_cdp_port(profile: &BrowserProfile, patience: Patience) -> Option<u16> {
   let profiles_dir = crate::profile::manager::ProfileManager::instance().get_profiles_dir();
-  let profile_path = profile.get_profile_data_path(&profiles_dir);
+  let profile_path = crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
   let profile_path_str = profile_path.to_string_lossy().to_string();
 
   // Port info is written once the process is up, so a tool called straight
@@ -253,11 +313,15 @@ async fn local_cdp_port(profile: &BrowserProfile, patience: Patience) -> Option<
     if attempt > 0 {
       tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    if let Some(port) = crate::wayfern_manager::WayfernManager::instance()
-      .get_cdp_port(&profile_path_str)
-      .await
-    {
-      return Some(port);
+    let port = if profile.browser == "cloak" {
+      crate::cbrowser_manager::get_cdp_port(&profile_path)
+    } else {
+      crate::wayfern_manager::WayfernManager::instance()
+        .get_cdp_port(&profile_path_str)
+        .await
+    };
+    if port.is_some() {
+      return port;
     }
   }
   None
@@ -269,6 +333,115 @@ async fn local_cdp_port(profile: &BrowserProfile, patience: Patience) -> Option<
 /// browser is not local, and a port whose process has since died answers
 /// nothing, which is exactly the signal that decision needs.
 async fn local_page_ws_url(profile: &BrowserProfile, patience: Patience) -> Option<String> {
+  local_page_ws_url_for_id(profile, patience, None).await
+}
+
+async fn local_page_ws_url_for_id(
+  profile: &BrowserProfile,
+  patience: Patience,
+  page_id: Option<&str>,
+) -> Option<String> {
+  let targets = local_page_targets(profile, patience).await?;
+  match page_id {
+    Some(id) => pick_local_page_socket_for_id(&targets, id),
+    None => pick_local_page_socket(&targets),
+  }
+}
+
+/// Read the live local page target list. The values are metadata from the
+/// browser's loopback `/json` endpoint; callers must still choose an explicit
+/// page before sending a page-level command.
+pub async fn list_local_page_targets(profile: &BrowserProfile) -> Result<Vec<Value>, ResolveError> {
+  if profile.process_id.is_none() {
+    return Err(ResolveError::NotRunning(format!(
+      "Profile '{}' is not running locally",
+      profile.name
+    )));
+  }
+  local_page_targets(profile, Patience::WaitForLaunch)
+    .await
+    .ok_or_else(|| {
+      ResolveError::NotRunning(format!(
+        "No CDP page targets available for profile '{}'",
+        profile.name
+      ))
+    })
+}
+
+/// List page targets wherever a supported profile is currently running.
+/// A stale local process marker is allowed to fall through to a live remote
+/// Wayfern session, matching [`resolve`]'s local-then-remote behavior.
+pub async fn list_page_targets(profile: &BrowserProfile) -> Result<Vec<Value>, ResolveError> {
+  if profile.process_id.is_some() {
+    match list_local_page_targets(profile).await {
+      Ok(targets) => return Ok(targets),
+      Err(error) if profile.browser != "wayfern" => return Err(error),
+      Err(_) => {}
+    }
+  }
+  list_remote_page_targets(profile).await
+}
+
+/// List page targets from a remote Wayfern browser without attaching one for a
+/// page command. The caller can then pass one of these target ids to
+/// [`resolve_for_page`].
+pub async fn list_remote_page_targets(
+  profile: &BrowserProfile,
+) -> Result<Vec<Value>, ResolveError> {
+  if profile.browser != "wayfern" || profile.process_id.is_some() {
+    return Err(ResolveError::Unsupported(format!(
+      "Profile '{}' is not a remote Wayfern session",
+      profile.name
+    )));
+  }
+  let session = crate::remote_session::live_session_for_profile(&profile.id.to_string())
+    .await
+    .ok_or_else(|| {
+      ResolveError::NotRunning(format!(
+        "Profile '{}' has no live remote session",
+        profile.name
+      ))
+    })?;
+  let endpoint = crate::remote_session::cdp_endpoint(&session.session_id)
+    .await
+    .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
+  let bearer = crate::remote_session::access_token_for_cdp().map_err(ResolveError::Endpoint)?;
+  let mut connection = dial_relay(&endpoint.ws_url, &bearer)
+    .await
+    .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
+  let result = connection
+    .call(
+      HANDSHAKE_GET_TARGETS_ID,
+      "Target.getTargets",
+      serde_json::json!({}),
+    )
+    .await
+    .map_err(|e| ResolveError::Endpoint(e.to_string()));
+  connection.close().await;
+  let result = result?;
+  Ok(
+    result
+      .get("targetInfos")
+      .and_then(Value::as_array)
+      .map(|infos| {
+        infos
+          .iter()
+          .filter(|info| {
+            info.get("type").and_then(Value::as_str) == Some("page")
+              && !info
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .starts_with("devtools://")
+          })
+          .cloned()
+          .collect()
+      })
+      .unwrap_or_default(),
+  )
+}
+
+async fn local_page_targets(profile: &BrowserProfile, patience: Patience) -> Option<Vec<Value>> {
   let port = local_cdp_port(profile, patience).await?;
   let listing = format!("http://127.0.0.1:{port}/json");
   let client = reqwest::Client::new();
@@ -286,8 +459,19 @@ async fn local_page_ws_url(profile: &BrowserProfile, patience: Patience) -> Opti
     {
       Ok(response) => match response.json::<Vec<Value>>().await {
         Ok(targets) => {
-          if let Some(ws_url) = pick_local_page_socket(&targets) {
-            return Some(ws_url);
+          let pages: Vec<Value> = targets
+            .into_iter()
+            .filter(|target| {
+              target.get("type").and_then(Value::as_str) == Some("page")
+                && !target
+                  .get("url")
+                  .and_then(Value::as_str)
+                  .unwrap_or_default()
+                  .starts_with("devtools://")
+            })
+            .collect();
+          if !pages.is_empty() {
+            return Some(pages);
           }
           last_err = "no page target found in browser".to_string();
         }
@@ -307,7 +491,32 @@ async fn local_page_ws_url(profile: &BrowserProfile, patience: Patience) -> Opti
 pub fn pick_local_page_socket(targets: &[Value]) -> Option<String> {
   targets
     .iter()
-    .find(|t| t.get("type").and_then(Value::as_str) == Some("page"))
+    .find(|t| {
+      t.get("type").and_then(Value::as_str) == Some("page")
+        && !t
+          .get("url")
+          .and_then(Value::as_str)
+          .unwrap_or_default()
+          .starts_with("devtools://")
+    })
+    .and_then(|t| t.get("webSocketDebuggerUrl"))
+    .and_then(Value::as_str)
+    .map(str::to_string)
+}
+
+/// Pick one named page from a local `/json` listing.
+pub fn pick_local_page_socket_for_id(targets: &[Value], page_id: &str) -> Option<String> {
+  targets
+    .iter()
+    .find(|t| {
+      t.get("type").and_then(Value::as_str) == Some("page")
+        && t.get("id").and_then(Value::as_str) == Some(page_id)
+        && !t
+          .get("url")
+          .and_then(Value::as_str)
+          .unwrap_or_default()
+          .starts_with("devtools://")
+    })
     .and_then(|t| t.get("webSocketDebuggerUrl"))
     .and_then(Value::as_str)
     .map(str::to_string)
@@ -327,6 +536,26 @@ pub fn pick_remote_page_target(result: &Value) -> Option<String> {
       let is_page = info.get("type").and_then(Value::as_str) == Some("page");
       let url = info.get("url").and_then(Value::as_str).unwrap_or_default();
       is_page && !url.starts_with("devtools://")
+    })
+    .and_then(|info| info.get("targetId"))
+    .and_then(Value::as_str)
+    .map(str::to_string)
+}
+
+/// Pick one named page from a `Target.getTargets` reply.
+pub fn pick_remote_page_target_for_id(result: &Value, page_id: &str) -> Option<String> {
+  result
+    .get("targetInfos")
+    .and_then(Value::as_array)?
+    .iter()
+    .find(|info| {
+      info.get("targetId").and_then(Value::as_str) == Some(page_id)
+        && info.get("type").and_then(Value::as_str) == Some("page")
+        && !info
+          .get("url")
+          .and_then(Value::as_str)
+          .unwrap_or_default()
+          .starts_with("devtools://")
     })
     .and_then(|info| info.get("targetId"))
     .and_then(Value::as_str)
@@ -490,7 +719,7 @@ impl CdpConnection {
   /// `'Page.navigate' wasn't found`. Attaching flat, and stamping the resulting
   /// session id onto everything after it, is what makes the tools this app
   /// already has work remotely without a single per-tool change.
-  async fn attach_to_page(&mut self) -> Result<(), CdpError> {
+  async fn attach_to_page(&mut self, requested_page_id: Option<&str>) -> Result<(), CdpError> {
     let targets = self
       .call(
         HANDSHAKE_GET_TARGETS_ID,
@@ -498,8 +727,13 @@ impl CdpConnection {
         serde_json::json!({}),
       )
       .await?;
-    let target_id = pick_remote_page_target(&targets)
-      .ok_or_else(|| CdpError::NotDrivable("the remote browser has no page open".to_string()))?;
+    let target_id = match requested_page_id {
+      Some(page_id) => pick_remote_page_target_for_id(&targets, page_id).ok_or_else(|| {
+        CdpError::NotDrivable(format!("remote page '{page_id}' is not available"))
+      })?,
+      None => pick_remote_page_target(&targets)
+        .ok_or_else(|| CdpError::NotDrivable("the remote browser has no page open".to_string()))?,
+    };
 
     let attached = self
       .call(
@@ -698,9 +932,10 @@ impl CdpTarget {
         ws_url,
         bearer,
         session_id,
+        page_id,
       } => {
         let mut connection = dial_relay(ws_url, bearer).await?;
-        if let Err(e) = connection.attach_to_page().await {
+        if let Err(e) = connection.attach_to_page(page_id.as_deref()).await {
           log::warn!("Could not attach to a page in remote session {session_id}: {e}");
           return Err(e);
         }
@@ -883,6 +1118,11 @@ mod tests {
       ]
     });
     assert_eq!(pick_remote_page_target(&targets).as_deref(), Some("t-page"));
+    assert_eq!(
+      pick_remote_page_target_for_id(&targets, "t-page").as_deref(),
+      Some("t-page")
+    );
+    assert!(pick_remote_page_target_for_id(&targets, "t-devtools").is_none());
   }
 
   #[test]
@@ -920,12 +1160,18 @@ mod tests {
   fn the_local_page_socket_is_read_from_the_json_listing() {
     let targets = vec![
       serde_json::json!({ "type": "background_page", "webSocketDebuggerUrl": "ws://x/bg" }),
-      serde_json::json!({ "type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/A" }),
+      serde_json::json!({ "type": "page", "id": "page-a", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/A" }),
+      serde_json::json!({ "type": "page", "id": "page-b", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/B" }),
     ];
     assert_eq!(
       pick_local_page_socket(&targets).as_deref(),
       Some("ws://127.0.0.1:1/devtools/page/A")
     );
+    assert_eq!(
+      pick_local_page_socket_for_id(&targets, "page-b").as_deref(),
+      Some("ws://127.0.0.1:1/devtools/page/B")
+    );
+    assert!(pick_local_page_socket_for_id(&targets, "missing").is_none());
     assert!(pick_local_page_socket(&[]).is_none());
   }
 
@@ -1070,6 +1316,7 @@ mod tests {
       ws_url: "wss://api.donutbrowser.com/api/remote-sessions/cdp?session_id=s1".to_string(),
       bearer: "secret-token".to_string(),
       session_id: "s1".to_string(),
+      page_id: None,
     };
     assert!(remote.is_remote());
     let described = remote.describe();
@@ -1248,6 +1495,7 @@ mod tests {
       ws_url,
       bearer: "user-access-token".to_string(),
       session_id: "sess-1".to_string(),
+      page_id: Some("page-1".to_string()),
     };
 
     let result = run_command(
@@ -1296,6 +1544,7 @@ mod tests {
       ws_url,
       bearer: "t".to_string(),
       session_id: "sess-1".to_string(),
+      page_id: None,
     };
 
     let started = std::time::Instant::now();
@@ -1340,6 +1589,7 @@ mod tests {
       ws_url,
       bearer: "t".to_string(),
       session_id: "sess-1".to_string(),
+      page_id: None,
     };
 
     let error = run_command(&target, "Page.navigate", serde_json::json!({}))

@@ -195,8 +195,8 @@
       "copyLogsSuccess": "로그가 클립보드에 복사되었습니다",
       "copyLogsDescription": "최근 로그를 민감 정보가 제거된 묶음으로 복사합니다(최대 5MB). 모든 유형의 개인 데이터를 식별할 수는 없으므로 공유하기 전에 검토하세요."
     },
-    "disableAutoUpdates": "앱 자동 업데이트 사용 안 함",
-    "disableAutoUpdatesDescription": "Donut Browser 업데이트를 앱이 자동으로 확인하고 설치하지 않도록 합니다. 브라우저 업데이트는 영향을 받지 않습니다.",
+    "disableAutoUpdates": "Updates Managed by Agent",
+    "disableAutoUpdatesDescription": "App, Wayfern, and GeoIP update downloads are locked. Update this authorized fork only through the reviewed agent runbook.",
     "keepDecryptedProfilesInRam": "복호화된 프로필을 RAM에 유지",
     "keepDecryptedProfilesInRamDescription": "비밀번호로 보호된 프로필의 복호화된 RAM 사본을 실행 사이에 유지하여 시작 속도를 높입니다. 디스크의 사본은 그대로 암호화된 상태로 유지됩니다.",
     "privacy": {
@@ -402,7 +402,17 @@
       "description": "디스크에 저장된 프로필 데이터를 암호화합니다. 실행하려면 필요합니다."
     },
     "downloadingSubtitle": "다운로드 중…",
-    "browsersDownloading": "브라우저를 아직 다운로드하는 중입니다. 다운로드가 완료되면 프로필을 만들 수 있습니다."
+    "browsersDownloading": "브라우저를 아직 다운로드하는 중입니다. 다운로드가 완료되면 프로필을 만들 수 있습니다.",
+    "engine": {
+      "label": "Browser engine",
+      "wayfern": "Wayfern",
+      "cloak": "CBrowser",
+      "wayfernDescription": "Donut's native anti-detect engine with editable fingerprint profiles.",
+      "cloakDescription": "Bundled CBrowser engine with a stable identity seed for each profile.",
+      "cloakBinaryMissing": "The bundled CBrowser runtime is unavailable. Restore the .local/cbrowser directory or select another compatible binary.",
+      "cloakBinaryReady": "The bundled CBrowser runtime is ready.",
+      "chooseCloakBinary": "Choose CBrowser binary"
+    }
   },
   "deleteDialog": {
     "title": "프로필 삭제",
@@ -1086,7 +1096,8 @@
     "refreshFingerprint": "핑거프린트 새로 고침",
     "canvasNoiseSeedPlaceholder": "캔버스 핑거프린트의 시드 문자열 입력",
     "addFontsPlaceholder": "글꼴 추가...",
-    "enterAsJson": "{{title}}을(를) JSON으로 입력"
+    "enterAsJson": "{{title}}을(를) JSON으로 입력",
+    "derivedFromIdentity": "Derived from this profile's identity and not editable."
   },
   "warnings": {
     "windowResizeTitle": "사용자 지정 창 크기",
@@ -1907,6 +1918,7 @@
     "proxySidecarVersionMismatch": "Donut Browser 파일에 서로 다른 버전이 섞여 있습니다. 최신 업데이트를 다시 설치해 주세요. 프로필은 안전하게 유지됩니다.",
     "updateProfilesRunning": "업데이트를 설치하기 전에 실행 중인 모든 프로필을 중지하세요.",
     "updatePreparationFailed": "Donut Browser가 백그라운드 네트워크 프로세스를 안전하게 중지하지 못했습니다. 컴퓨터를 다시 시작한 후 업데이트를 다시 시도하세요.",
+    "updatesManagedByAgent": "This fork is updated only by the agent using the reviewed update runbook.",
     "wayfernTermsRequired": "MCP 서버를 시작하기 전에 Wayfern 이용 약관에 동의하세요.",
     "apiPortUnavailable": "API 서버에서 사용 가능한 포트를 찾지 못했습니다.",
     "mcpServerAlreadyRunning": "MCP 서버가 이미 실행 중입니다.",
@@ -1977,7 +1989,17 @@
     "noE2ePasswordSet": "종단 간 암호화 비밀번호가 설정되지 않았습니다. 암호화된 데이터를 동기화하기 전에 설정하세요.",
     "importSourceNotChromium": "이 폴더는 Chromium 브라우저 프로필이 아닙니다",
     "importSourceNotChromiumNamed": "{{family}} 프로필은 가져올 수 없습니다. Chromium 기반 브라우저만 지원합니다",
-    "importSourceBrowserRunning": "{{browser}}을(를) 먼저 닫거나 그래도 가져오기를 선택하세요"
+    "importSourceBrowserRunning": "{{browser}}을(를) 먼저 닫거나 그래도 가져오기를 선택하세요",
+    "cloakBinaryInvalid": "That file is not a valid CBrowser executable.",
+    "cloakBinaryNotConfigured": "The bundled CBrowser runtime is unavailable.",
+    "cloakLaunchFailed": "CBrowser could not start: {{detail}}",
+    "cloakCdpUnavailable": "CBrowser started, but its local CDP endpoint is unavailable.",
+    "cloakStopFailed": "CBrowser could not be stopped: {{detail}}",
+    "wayfernCrossOsRequiresPlan": "This profile claims {{detail}}, which needs a paid plan and an active sign-in. Sign in or switch the profile to your own operating system.",
+    "wayfernFingerprintApplyFailed": "Could not apply this profile's fingerprint, so the browser was not started. {{detail}}",
+    "wayfernFingerprintGenerationFailed": "Could not create a fingerprint for this profile. {{detail}}",
+    "wayfernGenerationLimitReached": "The fingerprint generation limit for this account has been reached. New fingerprints are unavailable for up to 24 hours. This limit applies to this computer, not to one profile.",
+    "cookieBotUnsupportedEngine": "Cookie Bot supports Wayfern profiles only; run CBrowser profiles locally."
   },
   "rail": {
     "profiles": "프로필",

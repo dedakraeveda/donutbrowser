@@ -2,6 +2,14 @@ import type { CloudUser, Entitlements } from "@/types";
 
 const DEFAULT_REQUESTS_PER_HOUR = 100;
 
+/**
+ * This authorized fork unlocks capabilities that execute entirely on the local
+ * machine. Set NEXT_PUBLIC_DONUT_LOCAL_FEATURES=0 at build time to produce an
+ * upstream-compatible UI. Cloud-hosted services are never enabled here.
+ */
+export const LOCAL_FEATURES_ENABLED =
+  process.env.NEXT_PUBLIC_DONUT_LOCAL_FEATURES !== "0";
+
 interface Capabilities {
   browserAutomation: boolean;
   crossOsFingerprints: boolean;
@@ -83,47 +91,49 @@ const DEFAULT_PAID: Capabilities = {
 export function getEntitlements(
   user: CloudUser | null | undefined,
 ): Entitlements {
+  let result: Entitlements = NONE;
+
   if (user?.entitlements) {
     const server = user.entitlements;
     // A backend (or a cached login) older than the current release omits these
-    // keys. Reading them as `undefined` would hide a paid feature from a paying
-    // customer with nothing logged anywhere, so resolve them here — the one
-    // place every caller already goes through.
-    //
-    // Both absent flags fall back to `browserAutomation`, which is what they
-    // were derived from before solo existed: on every plan a pre-solo backend
-    // knows about, automation implied both the bot and interactive remote
-    // control. A solo user never hits this branch — the backend that can put
-    // them on solo is by definition new enough to send both keys.
-    //
-    // `remoteBrowserHours` stays 0 because the spendable figure is whatever
-    // `get_remote_hours_quota` reports, never a client guess.
-    return {
+    // keys. Keep the cloud-service fallback identical to upstream behavior.
+    result = {
       ...server,
       cookieBot: server.cookieBot ?? server.browserAutomation,
       remoteInteractive: server.remoteInteractive ?? server.browserAutomation,
       remoteBrowserHours: server.remoteBrowserHours ?? 0,
     };
+  } else if (user) {
+    const active =
+      user.plan !== "free" &&
+      (user.subscriptionStatus === "active" || user.planPeriod === "lifetime");
+
+    if (active) {
+      const caps = PLAN_CAPABILITIES[user.plan] ?? DEFAULT_PAID;
+      result = {
+        active: true,
+        browserAutomation: caps.browserAutomation,
+        crossOsFingerprints: caps.crossOsFingerprints,
+        cloudBackup: caps.cloudBackup,
+        teamCollaboration: caps.teamCollaboration,
+        cookieBot: caps.cookieBot,
+        remoteInteractive: caps.remoteInteractive,
+        profileLimit: user.profileLimit,
+        requestsPerHour: caps.browserAutomation ? DEFAULT_REQUESTS_PER_HOUR : 0,
+        remoteBrowserHours: 0,
+      };
+    }
   }
-  if (!user) return NONE;
 
-  const active =
-    user.plan !== "free" &&
-    (user.subscriptionStatus === "active" || user.planPeriod === "lifetime");
-  if (!active) return NONE;
+  if (!LOCAL_FEATURES_ENABLED) return result;
 
-  const caps = PLAN_CAPABILITIES[user.plan] ?? DEFAULT_PAID;
   return {
+    ...result,
     active: true,
-    browserAutomation: caps.browserAutomation,
-    crossOsFingerprints: caps.crossOsFingerprints,
-    cloudBackup: caps.cloudBackup,
-    teamCollaboration: caps.teamCollaboration,
-    cookieBot: caps.cookieBot,
-    remoteInteractive: caps.remoteInteractive,
-    profileLimit: user.profileLimit,
-    requestsPerHour: caps.browserAutomation ? DEFAULT_REQUESTS_PER_HOUR : 0,
-    remoteBrowserHours: 0,
+    browserAutomation: true,
+    crossOsFingerprints: true,
+    profileLimit: Number.MAX_SAFE_INTEGER,
+    requestsPerHour: 0,
   };
 }
 

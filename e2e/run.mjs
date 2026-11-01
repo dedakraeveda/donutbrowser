@@ -100,7 +100,19 @@ function log(message) {
 
 function run(command, args, cwd, env = process.env) {
   log(`${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, { cwd, env, stdio: "inherit" });
+  const isCommandShim =
+    isWindows && ["npm", "npx", "pnpm", "yarn"].includes(command);
+  const executable = isCommandShim
+    ? (process.env.ComSpec ?? "cmd.exe")
+    : command;
+  const executableArgs = isCommandShim
+    ? ["/d", "/s", "/c", command, ...args]
+    : args;
+  const result = spawnSync(executable, executableArgs, {
+    cwd,
+    env,
+    stdio: "inherit",
+  });
   if (result.error) {
     throw result.error;
   }
@@ -972,6 +984,7 @@ async function main() {
         DONUT_E2E_DRIVER_URL: `http://127.0.0.1:${driverPort}`,
         DONUT_E2E_FIXTURE_URL: `http://127.0.0.1:${fixture.port}`,
         DONUT_E2E_GEOIP_FIXTURE_READY: geoIpFixture ? "1" : "0",
+        DONUT_E2E_ALLOW_UPDATE_DOWNLOADS: needsBrowser ? "1" : "0",
         WAYFERN_TEST_TOKEN: token,
         RESIDENTIAL_PROXY_URL_ONE_SOCKS:
           localValues.RESIDENTIAL_PROXY_URL_ONE_SOCKS ?? "",

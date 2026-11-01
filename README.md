@@ -23,6 +23,14 @@
 
 <img alt="Donut Browser Preview" src="assets/donut-preview.png" />
 
+## Portable Agent Kit (Windows x64)
+
+The owner-authorized local Donut/CBrowser transfer kit is documented in [`distribution/START_HERE.md`](distribution/START_HERE.md). Separate NSIS EXE and portable ZIP include the complete local CBrowser **1.33** engine (technical build mapping: root `146_Cl.txt`), matching proxy sidecar, clean source snapshot, offline launcher, licenses and instructions for multiple coding agents. No owner profiles/cookies/tokens are exported. The kit has a separate application identity and does not update the owner's installed Donut. Technology attribution and our packaging changes: [`distribution/STACK.md`](distribution/STACK.md); agent setup: [`distribution/CLIENTS.md`](distribution/CLIENTS.md). Exact hashes/runtime checks and known baseline test limitations are recorded in each release's external `VERIFICATION.md`.
+
+### Linux x86_64 build
+
+Native Linux packaging and prerequisites are documented in [`distribution/LINUX.md`](distribution/LINUX.md). The current Ubuntu 26.04/glibc 2.43 artifact is explicitly **app-only**: Donut, matching native proxy/Xray and launcher are built; the developer's Linux CBrowser binary is still required. No Windows executable, third-party engine or fake runtime is substituted. `build_linux.py --engine-root` creates a complete kit only when that native engine is supplied; `--app-only` is reflected in the filename and manifest. A native Xvfb GUI/window smoke and missing-engine rejection have been verified; this is not a successful Linux CBrowser/MCP page-control smoke.
+
 ## Features
 
 - Unlimited browser profiles: each fully isolated with its own fingerprint, cookies, extensions, and data
@@ -91,6 +99,12 @@ If that gives an EGL display error, add `WEBKIT_DISABLE_DMABUF_RENDERER=1` or `G
 ```bash
 nix run github:zhom/donutbrowser#release-start
 ```
+
+## Authorized Fork: Local Capabilities
+
+This fork enables local REST/MCP/CDP automation, batch profile control, local fingerprint configuration, extension management, and self-hosted sync without a Donut cloud subscription. It supports profile-pinned Wayfern and the bundled autonomous CBrowser engine. Cloud-hosted Cookie Bot, remote browser sessions, team services, hosted backup, proxy bandwidth, and Wayfern token issuance still require their real services.
+
+See [AUTHORIZED_FORK.md](AUTHORIZED_FORK.md) for the capability matrix, [DUAL_ENGINE.md](DUAL_ENGINE.md) for the Wayfern + CBrowser architecture, [CBROWSER_SESSIONS.md](CBROWSER_SESSIONS.md) for UI/REST/Python session setup, and [AGENT_UPDATE_RUNBOOK.md](AGENT_UPDATE_RUNBOOK.md) for the mandatory agent-only update procedure.
 
 ## Self-Hosting Sync
 

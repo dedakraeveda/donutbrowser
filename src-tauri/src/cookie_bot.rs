@@ -612,6 +612,11 @@ pub fn bot_precondition(
   profile: &BrowserProfile,
   exit: &crate::remote_exit::ExitReachability,
 ) -> Result<(), String> {
+  if profile.browser != "wayfern" {
+    // Fleet workers launch Wayfern. Sending a Cloak profile directory there
+    // would silently change engines and invalidate its persistent identity.
+    return Err(error("COOKIE_BOT_UNSUPPORTED_ENGINE", &[]));
+  }
   if !profile.is_sync_enabled() {
     // The host materialises the profile by pulling it from donut-sync. A
     // local-only profile has nothing there, so there is no path to a run.
@@ -1426,6 +1431,15 @@ mod tests {
       .as_str()
       .expect("the envelope must name a code")
       .to_string()
+  }
+
+  #[test]
+  fn cloak_profile_is_never_silently_launched_as_wayfern_on_the_fleet() {
+    let mut profile = eligible_profile();
+    profile.browser = "cloak".to_string();
+    let err = bot_precondition(&profile, &ExitReachability::Remote)
+      .expect_err("the fleet must preserve the profile engine");
+    assert_eq!(code_of(&err), "COOKIE_BOT_UNSUPPORTED_ENGINE");
   }
 
   #[test]

@@ -1,0 +1,12 @@
+title = "Donut source secret scan"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Nonfunctional E2E fixture label and download-state map key, not credentials"
+regexTarget = "secret"
+regexes = [
+  '''^donut-e2e-rate-limit$''',
+  '''^wayfern-1\.2\.3-resolved$''',
+]

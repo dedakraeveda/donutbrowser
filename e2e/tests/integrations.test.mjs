@@ -792,6 +792,7 @@ test("MCP Streamable HTTP initialization, auth, discovery, calls, and isolated a
       "update_proxy",
       "get_page_content",
       "get_interactive_elements",
+      "list_tabs",
       // The remote loop has to be complete from MCP alone: start a session,
       // watch it become usable, drive it with the interaction tools above, stop
       // it. Any one of these missing leaves an agent able to lease a host it
@@ -808,6 +809,29 @@ test("MCP Streamable HTTP initialization, auth, discovery, calls, and isolated a
       "update_extension_group",
     ]) {
       assert.ok(names.includes(name), `MCP is missing ${name}`);
+    }
+    for (const name of [
+      "navigate",
+      "screenshot",
+      "evaluate_javascript",
+      "click_element",
+      "type_text",
+      "get_page_content",
+      "get_interactive_elements",
+      "click_by_index",
+      "type_by_index",
+      "get_page_info",
+    ]) {
+      const tool = tools.value.result.tools.find((item) => item.name === name);
+      assert.equal(
+        tool?.inputSchema?.properties?.page_id?.type,
+        "string",
+        `${name} must expose explicit page targeting`,
+      );
+      assert.ok(
+        !tool.inputSchema.required?.includes("page_id"),
+        `${name} must preserve single-tab compatibility`,
+      );
     }
     const listed = await jsonRequest(`${base}/mcp/${config.token}`, {
       method: "POST",
@@ -1155,7 +1179,10 @@ test("offline cloud, update, team-lock, trial, and synchronizer contracts are de
       );
       assert.equal(await app.invoke("cloud_get_user"), null);
       assert.equal(await app.invoke("cloud_get_proxy_usage"), null);
-      assert.ok(await app.invoke("cloud_get_wayfern_token"));
+      assert.equal(
+        await app.invoke("cloud_get_wayfern_token"),
+        process.env.WAYFERN_TEST_TOKEN || null,
+      );
       assert.deepEqual(await app.invoke("get_team_locks"), []);
       assert.equal(
         await app.invoke("get_team_lock_status", {
@@ -1181,6 +1208,14 @@ test("offline cloud, update, team-lock, trial, and synchronizer contracts are de
 
       assert.equal(await app.invoke("check_for_app_updates"), null);
       assert.equal(await app.invoke("check_for_app_updates_manual"), null);
+      // GeoIP is validated non-executable data and remains refreshable; app
+      // and browser executable downloads below stay agent-managed.
+      assert.equal(await app.invoke("download_geoip_database"), null);
+      assert.deepEqual(
+        await app.invoke("ensure_active_browsers_downloaded"),
+        [],
+      );
+      assert.deepEqual(await app.invoke("ensure_all_binaries_exist"), []);
       assert.ok(
         await invokeContract(app, "cloud_exchange_device_code", {
           code: "DONUT-E2E-INVALID-CODE",
@@ -1199,21 +1234,26 @@ test("offline cloud, update, team-lock, trial, and synchronizer contracts are de
       );
       assert.ok(await invokeContract(app, "cloud_refresh_wayfern_token"));
 
-      assert.ok(await invokeContract(app, "trigger_manual_version_update"));
-      assert.ok(
-        await invokeContract(app, "clear_all_version_cache_and_refetch"),
+      const browserUpdateError = await app.invokeError(
+        "trigger_manual_version_update",
       );
+      assert.match(browserUpdateError, /UPDATES_MANAGED_BY_AGENT/);
+      const cacheRefetchError = await app.invokeError(
+        "clear_all_version_cache_and_refetch",
+      );
+      assert.match(cacheRefetchError, /UPDATES_MANAGED_BY_AGENT/);
       assert.ok(await invokeContract(app, "check_for_browser_updates"));
       await app.invoke("dismiss_update_notification", {
         notificationId: "missing-e2e-notification",
       });
-      assert.deepEqual(
-        await app.invoke("complete_browser_update_with_auto_update", {
+      const completeUpdateError = await app.invokeError(
+        "complete_browser_update_with_auto_update",
+        {
           browser: "wayfern",
           newVersion: "150.0.7871.100",
-        }),
-        [],
+        },
       );
+      assert.match(completeUpdateError, /UPDATES_MANAGED_BY_AGENT/);
       const prepareError = await app.invokeError(
         "download_and_prepare_app_update",
         {
@@ -1232,7 +1272,9 @@ test("offline cloud, update, team-lock, trial, and synchronizer contracts are de
           },
         },
       );
-      assert.match(prepareError, /checksum|verif|Failed to download/i);
+      assert.match(prepareError, /UPDATES_MANAGED_BY_AGENT/);
+      const restartError = await app.invokeError("restart_application");
+      assert.match(restartError, /UPDATES_MANAGED_BY_AGENT/);
       const versionStatus = await app.invoke("get_version_update_status");
       assert.ok(versionStatus && typeof versionStatus === "object");
       assert.equal(typeof (await app.invoke("is_default_browser")), "boolean");

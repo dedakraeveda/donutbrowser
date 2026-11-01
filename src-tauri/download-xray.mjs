@@ -76,30 +76,23 @@ export function xrayDownloadUrl(assetName) {
   return `https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${assetName}`;
 }
 
-// `powershell -Command "<script>" a b` appends the trailing values to the
-// command text rather than binding them to $args, so the script ran with a
-// null -LiteralPath. Handing the paths over as environment variables binds
-// them for real and sidesteps quoting of Windows paths and spaces.
+// Windows ships bsdtar as `tar.exe`; passing paths as separate argv entries
+// avoids PowerShell policy/quoting problems and works with spaces in paths.
 export function windowsExtractionInvocation(archive, destinationDir) {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   return {
-    args: [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      "Expand-Archive -LiteralPath $env:DONUT_XRAY_ARCHIVE -DestinationPath $env:DONUT_XRAY_DESTINATION -Force",
-    ],
-    env: {
-      ...process.env,
-      DONUT_XRAY_ARCHIVE: archive,
-      DONUT_XRAY_DESTINATION: destinationDir,
-    },
+    command: join(systemRoot, "System32", "tar.exe"),
+    args: ["-xf", archive, "-C", destinationDir],
   };
 }
 
 function extractArchive(archive, destinationDir, windowsTarget) {
   if (windowsTarget) {
-    const { args, env } = windowsExtractionInvocation(archive, destinationDir);
-    const result = spawnSync("powershell", args, { stdio: "inherit", env });
+    const { command, args } = windowsExtractionInvocation(
+      archive,
+      destinationDir,
+    );
+    const result = spawnSync(command, args, { stdio: "inherit" });
     if (result.status !== 0) {
       throw new Error("Failed to extract the Xray-core archive");
     }

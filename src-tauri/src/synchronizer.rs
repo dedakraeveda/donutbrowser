@@ -45,6 +45,18 @@ pub struct CapturedEvent {
   pub timestamp: Option<f64>,
 }
 
+/// Convert captured wheel deltas to native CDP input, retaining the capture sign convention.
+fn wheel_replay_params(event: &CapturedEvent) -> serde_json::Value {
+  serde_json::json!({
+    "type": "mouseWheel",
+    "x": event.x.unwrap_or(0.0),
+    "y": event.y.unwrap_or(0.0),
+    "deltaX": -event.delta_x.unwrap_or(0.0),
+    "deltaY": -event.delta_y.unwrap_or(0.0),
+    "modifiers": event.modifiers.unwrap_or(0),
+  })
+}
+
 // No JavaScript injection needed — Wayfern.enableInputCapture handles everything natively.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -785,16 +797,8 @@ impl SynchronizerManager {
             ))
           }
         }
-        "wheel" => {
-          let dx = -event.delta_x.unwrap_or(0.0);
-          let dy = -event.delta_y.unwrap_or(0.0);
-          Some((
-            "Runtime.evaluate",
-            serde_json::json!({
-              "expression": format!("window.scrollBy({dx},{dy})"),
-            }),
-          ))
-        }
+        // Replay at the captured pointer position, including nested scroll containers.
+        "wheel" => Some(("Input.dispatchMouseEvent", wheel_replay_params(&event))),
         _ => None,
       };
 
@@ -1003,4 +1007,38 @@ pub async fn remove_sync_follower(
 #[tauri::command]
 pub async fn get_sync_sessions() -> Result<Vec<SyncSessionInfo>, String> {
   Ok(SynchronizerManager::instance().get_sessions().await)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn wheel_replay_preserves_pointer_modifiers_and_capture_sign() {
+    let event: CapturedEvent = serde_json::from_value(json!({
+      "type": "wheel", "x": 120.5, "y": 240.25,
+      "deltaX": 12.5, "deltaY": -120.0, "modifiers": 2
+    }))
+    .unwrap();
+    assert_eq!(
+      wheel_replay_params(&event),
+      json!({
+        "type": "mouseWheel", "x": 120.5, "y": 240.25,
+        "deltaX": -12.5, "deltaY": 120.0, "modifiers": 2
+      })
+    );
+  }
+
+  #[test]
+  fn wheel_replay_defaults_missing_optional_fields() {
+    let event: CapturedEvent = serde_json::from_value(json!({"type": "wheel"})).unwrap();
+    assert_eq!(
+      wheel_replay_params(&event),
+      json!({
+        "type": "mouseWheel", "x": 0.0, "y": 0.0,
+        "deltaX": 0.0, "deltaY": 0.0, "modifiers": 0
+      })
+    );
+  }
 }

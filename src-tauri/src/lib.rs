@@ -61,7 +61,9 @@ mod automation_rate_limiter;
 mod browser;
 mod browser_runner;
 mod browser_version_manager;
+mod cbrowser_manager;
 mod cdp_target;
+mod data_update_policy;
 mod default_browser;
 pub mod dns_blocklist;
 mod downloaded_browsers_registry;
@@ -104,6 +106,7 @@ mod cloud_errors;
 mod commercial_license;
 mod cookie_bot;
 mod cookie_manager;
+pub mod entitlements;
 pub mod events;
 mod mcp_integrations;
 mod mcp_server;
@@ -121,6 +124,7 @@ pub mod xray_worker_storage;
 use browser_runner::{
   check_browser_exists, kill_browser_profile, launch_browser_profile, open_url_with_profile,
 };
+use cbrowser_manager::{get_cloak_engine_status, set_cloak_binary_path};
 
 use profile::manager::{
   check_browser_status, clone_profile, create_browser_profile_new, delete_profile,
@@ -1842,6 +1846,11 @@ pub fn run_with_builder(
       // Recover ephemeral dir mappings from RAM-backed storage (tmpfs/ramdisk)
       ephemeral_dirs::recover_ephemeral_dirs();
 
+      match data_update_policy::ensure_config_file() {
+        Ok(path) => log::info!("Data update policy: {}", path.display()),
+        Err(error) => log::warn!("Failed to initialize data update policy: {error}"),
+      }
+
       // Extract icons and metadata for existing extensions that don't have them yet
       {
         let mgr = extension_manager::ExtensionManager::new();
@@ -2033,27 +2042,30 @@ pub fn run_with_builder(
       }
 
       if !e2e_automation_enabled() {
-        // Initialize and start background version updater
-        let app_handle = app.handle().clone();
-        tauri::async_runtime::spawn(async move {
-          let version_updater = get_version_updater();
+        if entitlements::EntitlementsPolicy::update_downloads_blocked() {
+          log::info!("Browser version updater disabled: updates are managed by the agent runbook");
+        } else {
+          let app_handle = app.handle().clone();
+          tauri::async_runtime::spawn(async move {
+            let version_updater = get_version_updater();
 
-          {
-            let mut updater_guard = version_updater.lock().await;
-            updater_guard.set_app_handle(app_handle);
-          }
-
-          {
-            let updater_guard = version_updater.lock().await;
-            if let Err(e) = updater_guard.start_background_updates().await {
-              log::error!("Failed to start background updates: {e}");
+            {
+              let mut updater_guard = version_updater.lock().await;
+              updater_guard.set_app_handle(app_handle);
             }
-          }
-        });
 
-        tauri::async_runtime::spawn(async move {
-          version_updater::VersionUpdater::run_background_task().await;
-        });
+            {
+              let updater_guard = version_updater.lock().await;
+              if let Err(e) = updater_guard.start_background_updates().await {
+                log::error!("Failed to start background updates: {e}");
+              }
+            }
+          });
+
+          tauri::async_runtime::spawn(async move {
+            version_updater::VersionUpdater::run_background_task().await;
+          });
+        }
       }
 
       // Auto-start MCP server if it was previously enabled. Always log the
@@ -2275,61 +2287,72 @@ pub fn run_with_builder(
           }
         });
 
-        tauri::async_runtime::spawn(async move {
-          let manager = dns_blocklist::BlocklistManager::instance();
-          let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(43200));
-          interval.tick().await;
-          loop {
-            interval.tick().await;
-            manager.refresh_all_stale().await;
-          }
-        });
+        if entitlements::EntitlementsPolicy::manual_external_data_updates_only() {
+          log::info!("Automatic DNS blocklist refresh disabled: explicit user or agent action required");
+        } else {
+          tauri::async_runtime::spawn(async move {
+            let manager = dns_blocklist::BlocklistManager::instance();
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            loop {
+              manager.refresh_all_stale().await;
+              tokio::time::sleep(data_update_policy::POLICY_POLL_INTERVAL).await;
+            }
+          });
+        }
 
-        tauri::async_runtime::spawn(async move {
-          let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3 * 60 * 60));
-          loop {
-            interval.tick().await;
-            log::info!("Checking for app updates...");
-            match app_auto_updater::check_for_app_updates().await {
-              Ok(Some(update_info)) => {
-                log::info!(
-                  "App update available: {} -> {}",
-                  update_info.current_version,
-                  update_info.new_version
-                );
-                if let Err(e) = events::emit("app-update-available", &update_info) {
-                  log::error!("Failed to emit app update event: {e}");
+        if entitlements::EntitlementsPolicy::manual_app_updates_only() {
+          log::info!("App self-updater disabled: authorized fork uses the agent update runbook");
+        } else {
+          tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3 * 60 * 60));
+            loop {
+              interval.tick().await;
+              log::info!("Checking for app updates...");
+              match app_auto_updater::check_for_app_updates().await {
+                Ok(Some(update_info)) => {
+                  log::info!(
+                    "App update available: {} -> {}",
+                    update_info.current_version,
+                    update_info.new_version
+                  );
+                  if let Err(e) = events::emit("app-update-available", &update_info) {
+                    log::error!("Failed to emit app update event: {e}");
+                  }
                 }
+                Ok(None) => log::debug!("No app updates available"),
+                Err(e) => log::error!("Failed to check for app updates: {e}"),
               }
-              Ok(None) => log::debug!("No app updates available"),
-              Err(e) => log::error!("Failed to check for app updates: {e}"),
             }
-          }
-        });
+          });
+        }
 
-        let app_handle_geoip = app.handle().clone();
-        tauri::async_runtime::spawn(async move {
-          tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-          let geoip_downloader = crate::geoip_downloader::GeoIPDownloader::instance();
-          match geoip_downloader.check_missing_geoip_database() {
-            Ok(true) => {
-              log::info!(
-                "GeoIP database is missing for Wayfern profiles, downloading at startup..."
-              );
-              let geoip_downloader = GeoIPDownloader::instance();
-              if let Err(e) = geoip_downloader
-                .download_geoip_database(&app_handle_geoip)
-                .await
-              {
-                log::error!("Failed to download GeoIP database at startup: {e}");
-              } else {
-                log::info!("GeoIP database downloaded successfully at startup");
+        if entitlements::EntitlementsPolicy::manual_external_data_updates_only() {
+          log::info!("Automatic GeoIP data refresh disabled by policy");
+        } else {
+          let app_handle_geoip = app.handle().clone();
+          tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            loop {
+              let geoip_downloader = crate::geoip_downloader::GeoIPDownloader::instance();
+              match geoip_downloader.check_missing_geoip_database() {
+                Ok(true) => {
+                  log::info!("GeoIP database is missing or stale; refreshing data...");
+                  if let Err(e) = geoip_downloader
+                    .download_geoip_database(&app_handle_geoip)
+                    .await
+                  {
+                    log::error!("Failed to refresh GeoIP database: {e}");
+                  } else {
+                    log::info!("GeoIP database refreshed successfully");
+                  }
+                }
+                Ok(false) => {}
+                Err(e) => log::error!("Failed to check GeoIP database status: {e}"),
               }
+              tokio::time::sleep(data_update_policy::POLICY_POLL_INTERVAL).await;
             }
-            Ok(false) => {}
-            Err(e) => log::error!("Failed to check GeoIP database status at startup: {e}"),
-          }
-        });
+          });
+        }
       }
 
       // Start proxy cleanup task for dead browser processes
@@ -2687,6 +2710,8 @@ pub fn run_with_builder(
       update_tray_menu,
       get_supported_browsers,
       is_browser_supported_on_platform,
+      get_cloak_engine_status,
+      set_cloak_binary_path,
       download_browser,
       cancel_download,
       delete_profile,
@@ -2916,6 +2941,7 @@ pub fn run_with_builder(
       // never waits out a reconnect backoff that is about to be pointless.
       if let tauri::RunEvent::Exit = _event {
         remote_session::stop_session_events();
+        tauri::async_runtime::block_on(cbrowser_manager::shutdown_geo_browsers());
       }
 
       #[cfg(target_os = "macos")]

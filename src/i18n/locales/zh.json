@@ -195,8 +195,8 @@
       "copyLogsSuccess": "日志已复制到剪贴板",
       "copyLogsDescription": "复制经过脱敏的近期日志包（最多 5 MB）。脱敏无法识别所有类型的个人数据，请在分享前检查内容。"
     },
-    "disableAutoUpdates": "禁用应用自动更新",
-    "disableAutoUpdatesDescription": "阻止应用程序自动检查和安装 Donut Browser 更新。浏览器更新不受影响。",
+    "disableAutoUpdates": "Updates Managed by Agent",
+    "disableAutoUpdatesDescription": "App, Wayfern, and GeoIP update downloads are locked. Update this authorized fork only through the reviewed agent runbook.",
     "keepDecryptedProfilesInRam": "在内存中保留已解密的配置文件",
     "keepDecryptedProfilesInRamDescription": "在启动之间保留密码保护配置文件的已解密内存副本,以便更快地启动。无论如何磁盘上的副本始终保持加密。",
     "privacy": {
@@ -402,7 +402,17 @@
       "description": "加密磁盘上的配置文件数据。启动时需要密码。"
     },
     "downloadingSubtitle": "正在下载…",
-    "browsersDownloading": "浏览器仍在下载中。下载完成后即可创建配置文件。"
+    "browsersDownloading": "浏览器仍在下载中。下载完成后即可创建配置文件。",
+    "engine": {
+      "label": "Browser engine",
+      "wayfern": "Wayfern",
+      "cloak": "CBrowser",
+      "wayfernDescription": "Donut's native anti-detect engine with editable fingerprint profiles.",
+      "cloakDescription": "Bundled CBrowser engine with a stable identity seed for each profile.",
+      "cloakBinaryMissing": "The bundled CBrowser runtime is unavailable. Restore the .local/cbrowser directory or select another compatible binary.",
+      "cloakBinaryReady": "The bundled CBrowser runtime is ready.",
+      "chooseCloakBinary": "Choose CBrowser binary"
+    }
   },
   "deleteDialog": {
     "title": "删除配置文件",
@@ -1086,7 +1096,8 @@
     "refreshFingerprint": "刷新指纹",
     "canvasNoiseSeedPlaceholder": "输入用于 canvas 指纹的种子字符串",
     "addFontsPlaceholder": "添加字体...",
-    "enterAsJson": "以 JSON 格式输入 {{title}}"
+    "enterAsJson": "以 JSON 格式输入 {{title}}",
+    "derivedFromIdentity": "Derived from this profile's identity and not editable."
   },
   "warnings": {
     "windowResizeTitle": "自定义窗口尺寸",
@@ -1907,6 +1918,7 @@
     "proxySidecarVersionMismatch": "部分 Donut Browser 文件来自不同版本。请重新安装最新更新；你的配置文件将保持安全。",
     "updateProfilesRunning": "安装更新前，请停止所有正在运行的配置文件。",
     "updatePreparationFailed": "Donut Browser 无法安全停止后台网络进程。请重启电脑，然后再次尝试更新。",
+    "updatesManagedByAgent": "This fork is updated only by the agent using the reviewed update runbook.",
     "wayfernTermsRequired": "请先接受 Wayfern 条款与条件，再启动 MCP 服务器。",
     "apiPortUnavailable": "API 服务器找不到可用端口。",
     "mcpServerAlreadyRunning": "MCP 服务器已在运行。",
@@ -1977,7 +1989,17 @@
     "noE2ePasswordSet": "尚未设置端到端加密密码。请先设置后再同步加密数据。",
     "importSourceNotChromium": "该文件夹不是 Chromium 浏览器配置文件",
     "importSourceNotChromiumNamed": "无法导入 {{family}} 配置文件；仅支持基于 Chromium 的浏览器",
-    "importSourceBrowserRunning": "请先关闭 {{browser}}，或选择仍要导入"
+    "importSourceBrowserRunning": "请先关闭 {{browser}}，或选择仍要导入",
+    "cloakBinaryInvalid": "That file is not a valid CBrowser executable.",
+    "cloakBinaryNotConfigured": "The bundled CBrowser runtime is unavailable.",
+    "cloakLaunchFailed": "CBrowser could not start: {{detail}}",
+    "cloakCdpUnavailable": "CBrowser started, but its local CDP endpoint is unavailable.",
+    "cloakStopFailed": "CBrowser could not be stopped: {{detail}}",
+    "wayfernCrossOsRequiresPlan": "This profile claims {{detail}}, which needs a paid plan and an active sign-in. Sign in or switch the profile to your own operating system.",
+    "wayfernFingerprintApplyFailed": "Could not apply this profile's fingerprint, so the browser was not started. {{detail}}",
+    "wayfernFingerprintGenerationFailed": "Could not create a fingerprint for this profile. {{detail}}",
+    "wayfernGenerationLimitReached": "The fingerprint generation limit for this account has been reached. New fingerprints are unavailable for up to 24 hours. This limit applies to this computer, not to one profile.",
+    "cookieBotUnsupportedEngine": "Cookie Bot supports Wayfern profiles only; run CBrowser profiles locally."
   },
   "rail": {
     "profiles": "配置文件",

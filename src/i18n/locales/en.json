@@ -195,8 +195,8 @@
       "copyLogsSuccess": "Logs copied to clipboard",
       "copyLogsDescription": "Copies a redacted bundle of recent logs (up to 5 MB). Review it before sharing because redaction cannot identify every kind of personal data."
     },
-    "disableAutoUpdates": "Disable App Auto Updates",
-    "disableAutoUpdatesDescription": "Prevent the app from automatically checking and installing Donut Browser updates. Browser updates are not affected.",
+    "disableAutoUpdates": "Updates Managed by Agent",
+    "disableAutoUpdatesDescription": "App, Wayfern, and GeoIP update downloads are locked. Update this authorized fork only through the reviewed agent runbook.",
     "keepDecryptedProfilesInRam": "Keep Decrypted Profiles In RAM",
     "keepDecryptedProfilesInRamDescription": "Preserve the decrypted in-RAM copy of password-protected profiles between launches for faster startup. The on-disk copy stays encrypted regardless.",
     "privacy": {
@@ -402,7 +402,17 @@
       "description": "Encrypts the on-disk profile data. Required to launch."
     },
     "downloadingSubtitle": "Downloading…",
-    "browsersDownloading": "Browsers are still downloading. Profile creation will be available once a download finishes."
+    "browsersDownloading": "Browsers are still downloading. Profile creation will be available once a download finishes.",
+    "engine": {
+      "label": "Browser engine",
+      "wayfern": "Wayfern",
+      "cloak": "CBrowser",
+      "wayfernDescription": "Donut's native anti-detect engine with editable fingerprint profiles.",
+      "cloakDescription": "Bundled CBrowser engine with a stable identity seed for each profile.",
+      "cloakBinaryMissing": "The bundled CBrowser runtime is unavailable. Restore the .local/cbrowser directory or select another compatible binary.",
+      "cloakBinaryReady": "The bundled CBrowser runtime is ready.",
+      "chooseCloakBinary": "Choose CBrowser binary"
+    }
   },
   "deleteDialog": {
     "title": "Delete Profile",
@@ -1908,6 +1918,8 @@
     "proxySidecarVersionMismatch": "Some Donut Browser files are from different versions. Reinstall the latest update; your profiles will stay safe.",
     "updateProfilesRunning": "Stop all running profiles before installing the update.",
     "updatePreparationFailed": "Donut Browser could not safely stop a background network process. Restart your computer, then try the update again.",
+    "appUpdatesManagedByAgent": "Self-updates are disabled in this authorized fork. Use the agent update runbook.",
+    "updatesManagedByAgent": "This fork is updated only by the agent using the reviewed update runbook.",
     "wayfernTermsRequired": "Accept the Wayfern Terms and Conditions before starting the MCP server.",
     "apiPortUnavailable": "The API server could not find an available port.",
     "mcpServerAlreadyRunning": "The MCP server is already running.",
@@ -1982,7 +1994,13 @@
     "wayfernFingerprintApplyFailed": "Could not apply this profile's fingerprint, so the browser was not started. {{detail}}",
     "wayfernFingerprintGenerationFailed": "Could not create a fingerprint for this profile. {{detail}}",
     "wayfernGenerationLimitReached": "The fingerprint generation limit for this account has been reached. New fingerprints are unavailable for up to 24 hours. This limit applies to this computer, not to one profile.",
-    "wayfernCrossOsRequiresPlan": "This profile claims {{detail}}, which needs a paid plan and an active sign-in. Sign in or switch the profile to your own operating system."
+    "wayfernCrossOsRequiresPlan": "This profile claims {{detail}}, which needs a paid plan and an active sign-in. Sign in or switch the profile to your own operating system.",
+    "cloakBinaryInvalid": "That file is not a valid CBrowser executable.",
+    "cloakBinaryNotConfigured": "The bundled CBrowser runtime is unavailable.",
+    "cloakLaunchFailed": "CBrowser could not start: {{detail}}",
+    "cloakCdpUnavailable": "CBrowser started, but its local CDP endpoint is unavailable.",
+    "cloakStopFailed": "CBrowser could not be stopped: {{detail}}",
+    "cookieBotUnsupportedEngine": "Cookie Bot supports Wayfern profiles only; run CBrowser profiles locally."
   },
   "rail": {
     "profiles": "Profiles",

@@ -157,6 +157,8 @@ export const commandCoverage = {
     level: "integration",
     commands: [
       "get_supported_browsers",
+      "get_cloak_engine_status",
+      "set_cloak_binary_path",
       "check_browser_exists",
       "is_browser_supported_on_platform",
       "download_browser",

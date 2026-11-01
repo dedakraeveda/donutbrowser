@@ -358,6 +358,11 @@ test("all primary navigation buttons and sub-page tabs render and remain interac
       { description: "new profile dialog" },
     );
     assert.match(await app.bodyText(), /profile/i);
+    await app.waitForText("Browser engine");
+    await app.clickSelector("#profile-engine");
+    await app.clickText("CBrowser", { roles: ["option"] });
+    await app.waitForText("Choose CBrowser binary");
+    assert.match(await app.bodyText(), /bundled CBrowser runtime is ready/i);
     await dismissSurface(app);
   });
 });

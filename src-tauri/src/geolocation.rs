@@ -198,6 +198,20 @@ impl LocaleSelector {
 
   #[allow(clippy::wrong_self_convention)]
   pub fn from_region(&self, region: &str) -> Result<Locale, GeolocationError> {
+    self.select_region(region, rand::rng().random::<f64>())
+  }
+
+  /// Stable weighted selection for profiles whose locale is applied at each launch.
+  pub fn locale_for_seed(&self, region: &str, seed: u64) -> Result<Locale, GeolocationError> {
+    // Mix sequential/small fingerprint seeds before mapping them to a fraction.
+    let mut value = seed.wrapping_add(0x9e3779b97f4a7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
+    value ^= value >> 31;
+    self.select_region(region, (value >> 11) as f64 / ((1u64 << 53) as f64))
+  }
+
+  fn select_region(&self, region: &str, fraction: f64) -> Result<Locale, GeolocationError> {
     let region_upper = region.to_uppercase();
 
     let languages = self
@@ -210,8 +224,7 @@ impl LocaleSelector {
     }
 
     let total: f64 = languages.iter().map(|l| l.population_percent).sum();
-    let mut rng = rand::rng();
-    let target = rng.random::<f64>() * total;
+    let target = fraction * total;
     let mut cumulative = 0.0;
 
     for lang in languages {

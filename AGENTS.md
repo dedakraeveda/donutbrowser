@@ -4,6 +4,28 @@ NEVER run any git command that modifies git history OR the working tree, in ANY 
 
 ---
 
+# PORTABLE DISTRIBUTION PERMISSION (2026-10-28)
+
+The owner confirmed that the developer granted permission for this fork and that the existing local CBrowser has long diverged from Cloak. Packaging this local engine with Donut into separate EXE/ZIP transfer kits is authorized. Preserve applicable licenses/notices and matching Donut source; never include personal profiles, cookies, vault/DPAPI or tokens. A coincident Chromium version number is not evidence that the local binary is an unmodified third-party release and is not a reason to re-block this agreed task. This is not authorization to update the owner's installed application/accounts. Details: `AUTHORIZED_FORK.md`, `distribution/START_HERE.md`.
+
+# AUTHORIZED FORK UPDATE POLICY
+
+Application self-update is intentionally disabled. Never re-enable upstream
+release checks, downloads, installers, or update-triggered restarts. Update this
+fork only after an explicit owner request and follow `AGENT_UPDATE_RUNBOOK.md`
+completely, including backup, validation, hashes, wiki/dashboard evidence, and
+rollback preservation. `CBROWSER_SESSIONS.md` is the canonical session guide.
+
+Before browser automation or an MCP integration decision, read
+[`CBROWSER_SESSIONS.md`](CBROWSER_SESSIONS.md). It records the verified local
+CBrowser/Wayfern capability map, corrected REST recipes and built-ins-first rule.
+Default: Donut + Pi proxy preflight + existing profile + CDP/Playwright. Ordinary
+page control does not require a separate MCP per engine. Wayfern Synchronizer is
+an on-demand exception; do not expose the full Donut catalog or install a second
+CloakBrowser runtime merely to operate tabs.
+
+---
+
 # AI CONTRIBUTION POLICY: APPLIES TO YOU
 
 This repository auto-closes pull requests that break the [AI policy](CONTRIBUTING.md#ai-policy). If you are an agent working here:
@@ -55,6 +77,7 @@ donutbrowser/
 │   │   ├── xray_worker_runner.rs    # Xray-core sidecar lifecycle
 │   │   ├── xray_worker_storage.rs   # Private Xray worker state and runtime files
 │   │   ├── wayfern_manager.rs       # Wayfern (Chromium) browser management
+│   │   ├── cbrowser_manager.rs        # Bundled CBrowser discovery, lifecycle, and CDP
 │   │   ├── downloader.rs           # Browser binary downloader
 │   │   ├── extraction.rs           # Archive extraction (zip, tar, dmg, msi)
 │   │   ├── settings_manager.rs     # App settings persistence
@@ -76,7 +99,10 @@ donutbrowser/
 │   ├── app/                        # Test-only Tauri harness that injects the private driver
 │   ├── lib/                        # WebDriver, CDP, fixtures, app-session helpers
 │   └── tests/                      # Smoke, UI, entity, integration, sync, browser suites
+├── distribution/                   # Transfer kit launcher, EXE/ZIP builder, agent/client docs and tests
 ├── patches/                        # pnpm compatibility patches for secured dependencies
+├── AGENT_UPDATE_RUNBOOK.md         # Mandatory reviewed manual-update procedure
+├── CBROWSER_SESSIONS.md            # CBrowser UI/REST/Python session guide
 ├── flake.nix                       # Nix development environment
 └── .github/workflows/              # CI/CD pipelines
 ```

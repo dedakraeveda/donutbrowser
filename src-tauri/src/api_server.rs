@@ -113,8 +113,9 @@ pub struct ApiProfileResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateProfileRequest {
   pub name: String,
-  /// Browser engine. Must be `"wayfern"` (anti-detect Chromium). Any other
-  /// value (e.g. `"chromium"`) is rejected with 400.
+  /// Browser engine. Must be `"wayfern"` or `"cloak"`. The serialized
+  /// `"cloak"` id selects CBrowser's workspace-local runtime or an explicitly
+  /// configured compatible override; any other value is rejected with 400.
   pub browser: String,
   /// Optional. Omit (or pass `"latest"`) to use the newest already-downloaded
   /// version of the chosen browser. A concrete version must already be
@@ -155,6 +156,18 @@ pub struct UpdateProfileRequest {
   /// Wipe browsing data (keeping extensions and bookmarks) when the browser
   /// exits. Rejected (400) for ephemeral or password-protected profiles.
   pub clear_on_close: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct CloneProfileRequest {
+  /// Exact new name. Existing names are rejected; no overwrite or merge.
+  name: String,
+  /// Explicit consent to duplicate cookies, passwords and other local profile data.
+  confirm_copy_session: bool,
+  /// Clear proxy, VPN, launch hook and bypass rules in the new profile only.
+  #[serde(default)]
+  direct: bool,
 }
 
 #[derive(Clone)]
@@ -571,6 +584,7 @@ struct ImportProxiesResponse {
   paths(
     get_profiles,
     get_profile,
+    clone_profile_api,
     create_profile,
     update_profile,
     delete_profile,
@@ -639,6 +653,7 @@ struct ImportProxiesResponse {
     ApiProfilesResponse,
     ApiProfileResponse,
     CreateProfileRequest,
+    CloneProfileRequest,
     UpdateProfileRequest,
     ApiGroupResponse,
     CreateGroupRequest,
@@ -872,6 +887,7 @@ fn build_v1_router() -> Router<ApiServerState> {
   let (routes, _) = OpenApiRouter::new()
     .routes(routes!(get_profiles, create_profile))
     .routes(routes!(get_profile, update_profile, delete_profile))
+    .routes(routes!(clone_profile_api))
     .routes(routes!(run_profile))
     .routes(routes!(run_profile_remote))
     // One `routes!` per PATH, not per handler: the GET and the DELETE share
@@ -1325,10 +1341,80 @@ async fn get_profile(
   }
 }
 
+/// Clone through the same manager used by the native UI. The source must be stopped.
+#[utoipa::path(
+  post,
+  path = "/profiles/{id}/clone",
+  params(("id" = String, Path, description = "Source profile UUID")),
+  request_body = CloneProfileRequest,
+  responses(
+    (status = 200, description = "New cloned profile", body = ApiProfileResponse),
+    (status = 400, description = "Invalid name, UUID or missing explicit consent"),
+    (status = 401, description = "Unauthorized"),
+    (status = 404, description = "Source profile not found"),
+    (status = 409, description = "Source running or destination name already exists"),
+    (status = 500, description = "Clone failed; inspect profiles before any retry")
+  ),
+  security(("bearer_auth" = [])),
+  tag = "profiles"
+)]
+async fn clone_profile_api(
+  Path(id): Path<String>,
+  Json(request): Json<CloneProfileRequest>,
+) -> Result<Json<ApiProfileResponse>, (StatusCode, String)> {
+  let source_id = uuid::Uuid::parse_str(&id)
+    .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid profile UUID".to_string()))?;
+  let name = request.name.trim();
+  if !request.confirm_copy_session || name.is_empty() || name.len() > 200 {
+    return Err((
+      StatusCode::BAD_REQUEST,
+      "Explicit session-copy consent and a bounded name are required".to_string(),
+    ));
+  }
+  let manager = ProfileManager::instance();
+  let profiles = manager.list_profiles().map_err(manager_error_response)?;
+  let source = profiles.iter().find(|p| p.id == source_id).ok_or_else(|| {
+    (
+      StatusCode::NOT_FOUND,
+      "Source profile not found".to_string(),
+    )
+  })?;
+  if source.process_id.is_some() || profiles.iter().any(|p| p.name == name) {
+    return Err((
+      StatusCode::CONFLICT,
+      "Source must be stopped and destination name must be unused".to_string(),
+    ));
+  }
+  let mut cloned = manager
+    .clone_profile(&id, Some(name.to_string()))
+    .map_err(|_| {
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Clone failed; inspect profiles before retrying".to_string(),
+      )
+    })?;
+  if request.direct {
+    cloned.proxy_id = None;
+    cloned.vpn_id = None;
+    cloned.launch_hook = None;
+    cloned.proxy_bypass_rules.clear();
+    manager.save_profile(&cloned).map_err(|_| {
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Clone created but direct routing not saved; do not launch or retry blindly".to_string(),
+      )
+    })?;
+  }
+  Ok(Json(ApiProfileResponse {
+    profile: ApiProfile::from(&cloned),
+  }))
+}
+
 /// Create a profile.
 ///
-/// - `browser` must be `"wayfern"`; any other value is rejected
-///   with 400.
+/// - `browser` must be `"wayfern"` or `"cloak"`; any other value is rejected
+///   with 400. The legacy `"cloak"` id selects CBrowser's workspace-local
+///   runtime or an explicitly configured compatible override.
 /// - `version` is optional: omit it or pass `"latest"` to use the newest
 ///   already-downloaded version of that browser. The version must be present
 ///   locally (this endpoint does not download new versions); 400 if none is.
@@ -1360,16 +1446,11 @@ async fn create_profile(
 ) -> Result<Json<ApiProfileResponse>, (StatusCode, String)> {
   let profile_manager = ProfileManager::instance();
 
-  // Only Wayfern profiles are launchable; the rest of the system
-  // (fingerprint generation, launch, run) supports nothing else. Reject anything
-  // else up front — otherwise the profile is created with no fingerprint and an
-  // unrecognized browser, then crashes with a 500 on /run. Mirrors the MCP
-  // create_profile validation.
-  if request.browser != "wayfern" {
+  if !crate::browser::BrowserType::supports_local_automation(&request.browser) {
     return Err((
       StatusCode::BAD_REQUEST,
       format!(
-        "Invalid browser \"{}\". Must be \"wayfern\" (anti-detect Chromium).",
+        "Invalid browser \"{}\". Must be \"wayfern\" or \"cloak\".",
         request.browser
       ),
     ));
@@ -1405,6 +1486,12 @@ async fn create_profile(
   // Parse wayfern config if provided. A malformed config is a 400, never a
   // silent fallback: swallowing it here produced a host-OS profile from a
   // request that explicitly asked for another OS, with a 200 and no diagnostic.
+  if request.browser == "cloak" && request.wayfern_config.is_some() {
+    return Err((
+      StatusCode::BAD_REQUEST,
+      "wayfern_config cannot be used with a Cloak profile".to_string(),
+    ));
+  }
   let wayfern_config: Option<crate::wayfern_manager::WayfernConfig> = match &request.wayfern_config
   {
     Some(config) => Some(serde_json::from_value(config.clone()).map_err(|e| {
@@ -1416,11 +1503,12 @@ async fn create_profile(
     None => None,
   };
 
-  // Cross-OS fingerprints are a paid capability. The Tauri command, the
-  // importer and MCP each check this; REST did not, so the restriction was
-  // bypassable through this endpoint alone.
-  if !crate::cloud_auth::CLOUD_AUTH
-    .is_fingerprint_os_allowed(wayfern_config.as_ref().and_then(|c| c.os.as_deref()))
+  // Cross-OS fingerprints follow the effective local-or-cloud policy. The
+  // Tauri command, importer, MCP, and REST surfaces must agree.
+  if request.browser == "wayfern"
+    && !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(
+      wayfern_config.as_ref().and_then(|c| c.os.as_deref()),
+    )
     .await
   {
     return Err((
@@ -2766,7 +2854,7 @@ async fn remove_extension_from_group_api(
     (status = 200, description = "Profile launched successfully", body = RunProfileResponse),
     (status = 400, description = "Cannot launch cross-OS profile"),
     (status = 401, description = "Unauthorized"),
-    (status = 402, description = "Active paid plan with browser automation required"),
+    (status = 402, description = "Authorized local features or an eligible cloud plan required"),
     (status = 404, description = "Profile not found"),
     (status = 409, description = "Profile is locked by another team member, running on the remote fleet, or waiting for a finished remote session to be pulled back"),
     (status = 429, description = "Automation request rate limit exceeded"),
@@ -2783,10 +2871,7 @@ async fn run_profile(
   State(state): State<ApiServerState>,
   Json(request): Json<RunProfileRequest>,
 ) -> Result<Json<RunProfileResponse>, (StatusCode, String)> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -2876,10 +2961,7 @@ async fn run_profile_remote(
   State(state): State<ApiServerState>,
   Json(request): Json<RunRemoteRequest>,
 ) -> Result<Json<RunRemoteResponse>, (StatusCode, String)> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_remote_automation().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -3030,6 +3112,9 @@ pub async fn remote_launch_precondition(
 pub fn remote_launch_profile_rules(
   profile: &crate::profile::types::BrowserProfile,
 ) -> Result<(), String> {
+  if profile.browser != "wayfern" {
+    return Err("remote fleet execution supports Wayfern profiles only".to_string());
+  }
   if !profile.is_sync_enabled() {
     return Err(
       "profile does not have cloud sync enabled; a remote host has no way to \
@@ -3255,10 +3340,7 @@ async fn remote_session_cdp(
   Path(id): Path<String>,
   upgrade: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, String)> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_remote_automation().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -3758,7 +3840,7 @@ async fn list_cookie_bot_runs(
 async fn start_cookie_bot_run(
   Json(request): Json<StartCookieBotRunRequest>,
 ) -> Result<(StatusCode, Json<crate::cookie_bot::CookieBotRunStarted>), (StatusCode, String)> {
-  if !crate::cloud_auth::CLOUD_AUTH.can_use_cookie_bot().await {
+  if !crate::entitlements::EntitlementsPolicy::can_use_cookie_bot().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -3880,7 +3962,7 @@ async fn get_cookie_bot_usage(
     (status = 200, description = "URL opened successfully, locally or on the profile's remote session"),
     (status = 400, description = "Cannot open URL with a cross-OS profile that is not running remotely"),
     (status = 401, description = "Unauthorized"),
-    (status = 402, description = "Active paid plan with browser automation required"),
+    (status = 402, description = "Authorized local features or an eligible cloud plan required"),
     (status = 404, description = "Profile not found"),
     (status = 409, description = "Profile is locked by another team member, or waiting for a finished remote session to be pulled back"),
     (status = 429, description = "Automation request rate limit exceeded"),
@@ -3897,10 +3979,7 @@ async fn open_url_in_profile(
   State(state): State<ApiServerState>,
   Json(request): Json<OpenUrlRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -3935,7 +4014,7 @@ async fn open_url_in_profile(
   responses(
     (status = 204, description = "Browser stopped, locally or on the profile's remote session"),
     (status = 401, description = "Unauthorized"),
-    (status = 402, description = "Active paid plan required"),
+    (status = 402, description = "Authorized local features or an eligible cloud plan required"),
     (status = 404, description = "Profile not found"),
     (status = 429, description = "Automation request rate limit exceeded"),
     (status = 503, description = "The fleet could not be reached; the remote browser is still running"),
@@ -3950,12 +4029,9 @@ async fn kill_profile(
   Path(id): Path<String>,
   State(state): State<ApiServerState>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-  // Programmatically launching and stopping profiles is a paid feature; the
-  // run/open-url handlers gate the same way.
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  // Programmatic stop follows the same local-or-cloud automation policy as
+  // run/open-url.
+  if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
     return Err((StatusCode::PAYMENT_REQUIRED, String::new()));
   }
 
@@ -4000,7 +4076,7 @@ async fn kill_profile(
   responses(
     (status = 200, description = "Batch launch completed; inspect per-profile results", body = BatchRunResponse),
     (status = 401, description = "Unauthorized"),
-    (status = 402, description = "Active paid plan with browser automation required"),
+    (status = 402, description = "Authorized local features or an eligible cloud plan required"),
     (status = 429, description = "Automation request rate limit exceeded"),
     (status = 500, description = "Internal server error")
   ),
@@ -4013,10 +4089,7 @@ async fn batch_run_profiles(
   State(state): State<ApiServerState>,
   Json(request): Json<BatchRunRequest>,
 ) -> Result<Json<BatchRunResponse>, StatusCode> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
     return Err(StatusCode::PAYMENT_REQUIRED);
   }
 
@@ -4094,7 +4167,7 @@ async fn batch_run_profiles(
   responses(
     (status = 200, description = "Batch stop completed; inspect per-profile results", body = BatchStopResponse),
     (status = 401, description = "Unauthorized"),
-    (status = 402, description = "Active paid plan with browser automation required"),
+    (status = 402, description = "Authorized local features or an eligible cloud plan required"),
     (status = 429, description = "Automation request rate limit exceeded"),
     (status = 500, description = "Internal server error")
   ),
@@ -4107,10 +4180,7 @@ async fn batch_stop_profiles(
   State(state): State<ApiServerState>,
   Json(request): Json<BatchStopRequest>,
 ) -> Result<Json<BatchStopResponse>, StatusCode> {
-  if !crate::cloud_auth::CLOUD_AUTH
-    .can_use_browser_automation()
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
     return Err(StatusCode::PAYMENT_REQUIRED);
   }
 
@@ -4441,6 +4511,15 @@ mod tests {
   // obtains the profile from donut-sync, so a profile that has never synced
   // would launch an empty browser and push that emptiness over the real one.
   #[test]
+  fn remote_launch_never_changes_a_cloak_profile_into_wayfern() {
+    let mut profile = profile_with(SyncMode::Regular, Some("windows"));
+    profile.browser = "cloak".to_string();
+    let err =
+      remote_launch_profile_rules(&profile).expect_err("the remote fleet supports Wayfern only");
+    assert!(err.contains("Wayfern"));
+  }
+
+  #[test]
   fn remote_launch_requires_cloud_sync() {
     let err = remote_launch_profile_rules(&profile_with(SyncMode::Disabled, Some("macos")))
       .expect_err("a non-synced profile must be refused");
@@ -4650,10 +4729,9 @@ mod tests {
 
   #[test]
   fn create_profile_browser_validation_matches_supported_engines() {
-    // The handler rejects anything that isn't a launchable engine; this is the
-    // same predicate it uses, kept in lockstep with MCP's create_profile.
-    let is_valid = |b: &str| b == "wayfern";
+    let is_valid = crate::browser::BrowserType::supports_local_automation;
     assert!(is_valid("wayfern"));
+    assert!(is_valid("cloak"));
     assert!(!is_valid("chromium"));
     assert!(!is_valid(""));
   }
@@ -5385,11 +5463,28 @@ mod tests {
   }
 
   #[test]
+  fn clone_api_requires_explicit_consent_field() {
+    assert!(
+      serde_json::from_value::<CloneProfileRequest>(serde_json::json!({"name":"RU"})).is_err()
+    );
+    let request: CloneProfileRequest =
+      serde_json::from_value(serde_json::json!({"name":"RU", "confirm_copy_session":true}))
+        .unwrap();
+    assert!(!request.direct);
+    assert!(request.confirm_copy_session);
+    assert!(serde_json::from_value::<CloneProfileRequest>(
+      serde_json::json!({"name":"RU", "confirm_copy_session":true, "unknown":true})
+    )
+    .is_err());
+  }
+
+  #[test]
   fn openapi_spec_covers_registered_routes() {
     let spec = serde_json::to_value(ApiDoc::openapi()).expect("spec serializes");
     let paths = spec["paths"].as_object().expect("paths object");
 
     for path in [
+      "/v1/profiles/{id}/clone",
       "/v1/vpns/{id}/export",
       "/v1/extensions",
       "/v1/extension-groups",

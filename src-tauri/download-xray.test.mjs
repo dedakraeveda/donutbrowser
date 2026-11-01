@@ -98,27 +98,14 @@ test("bundles the upstream license in Tauri and portable releases", async () => 
   }
 });
 
-test("binds Windows extraction paths that PowerShell can actually read", () => {
-  const { args, env } = windowsExtractionInvocation(
-    "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray\\Xray-windows-64.zip",
-    "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray",
-  );
+test("passes Windows extraction paths to bsdtar without shell quoting", () => {
+  const archive =
+    "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray\\Xray-windows-64.zip";
+  const destination = "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray";
+  const { command, args } = windowsExtractionInvocation(archive, destination);
 
-  // `powershell -Command "<script>" a b` folds the trailing values into the
-  // command text instead of populating $args, which left -LiteralPath null.
-  const script = args.at(-1);
-  assert.equal(args.at(-2), "-Command");
-  assert.doesNotMatch(script, /\$args/);
-  assert.match(script, /-LiteralPath \$env:DONUT_XRAY_ARCHIVE\b/);
-  assert.match(script, /-DestinationPath \$env:DONUT_XRAY_DESTINATION\b/);
-  assert.equal(
-    env.DONUT_XRAY_ARCHIVE,
-    "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray\\Xray-windows-64.zip",
-  );
-  assert.equal(
-    env.DONUT_XRAY_DESTINATION,
-    "C:\\Users\\runner\\AppData\\Local\\Temp\\donut xray",
-  );
+  assert.match(command, /[\\/]System32[\\/]tar\.exe$/i);
+  assert.deepEqual(args, ["-xf", archive, "-C", destination]);
 });
 
 test("rejects an unsupported target before downloading", async () => {

@@ -865,3 +865,61 @@ test("cookie import/copy/export, profile encryption, and traffic-stat read/clear
     });
   });
 });
+
+test("CBrowser override creates an engine-pinned profile and falls back to bundled runtime", async () => {
+  await withApp("entities-cloak", async (app) => {
+    const engineDir = path.join(app.root, "external-cloak");
+    const executable = path.join(engineDir, "chrome.exe");
+    await mkdir(engineDir, { recursive: true });
+    await writeFile(executable, Buffer.from("MZfixture"));
+    await writeFile(path.join(engineDir, "chrome.dll"), "fixture");
+
+    const status = await app.invoke("set_cloak_binary_path", {
+      path: executable,
+    });
+    assert.equal(status.available, true);
+    assert.equal(status.bundled, false);
+    assert.equal(await realpath(status.path), await realpath(executable));
+    assert.deepEqual(
+      await app.invoke("get_downloaded_browser_versions", {
+        browserStr: "cloak",
+      }),
+      ["external"],
+    );
+
+    const profile = await app.invoke("create_browser_profile_new", {
+      name: "Cloak Entity",
+      browserStr: "cloak",
+      version: "external",
+      releaseType: "stable",
+      proxyId: null,
+      vpnId: null,
+      wayfernConfig: null,
+      groupId: null,
+      ephemeral: false,
+      dnsBlocklist: null,
+      launchHook: null,
+    });
+    assert.equal(profile.browser, "cloak");
+    assert.equal(profile.version, "external");
+    assert.equal(profile.wayfern_config, null);
+
+    const metadataPath = path.join(
+      app.dataRoot,
+      "data",
+      "profiles",
+      profile.id,
+      "metadata.json",
+    );
+    const metadata = await readFile(metadataPath, "utf8");
+    assert.doesNotMatch(metadata, /external-cloak|chrome\.exe/i);
+
+    await app.invoke("delete_selected_profiles", {
+      profileIds: [profile.id],
+    });
+    const cleared = await app.invoke("set_cloak_binary_path", { path: null });
+    assert.equal(cleared.available, true);
+    assert.equal(cleared.bundled, true);
+    assert.match(cleared.path, /\.local[\\/]cbrowser[\\/].*chrome\.exe/i);
+  });
+});

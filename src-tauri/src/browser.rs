@@ -16,20 +16,27 @@ pub struct ProxySettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BrowserType {
   Wayfern,
+  Cloak,
 }
 
 impl BrowserType {
   pub fn as_str(&self) -> &'static str {
     match self {
       BrowserType::Wayfern => "wayfern",
+      BrowserType::Cloak => "cloak",
     }
   }
 
   pub fn from_str(s: &str) -> Result<Self, String> {
     match s {
       "wayfern" => Ok(BrowserType::Wayfern),
+      "cloak" => Ok(BrowserType::Cloak),
       _ => Err(format!("Unknown browser type: {s}")),
     }
+  }
+
+  pub fn supports_local_automation(s: &str) -> bool {
+    matches!(s, "wayfern" | "cloak")
   }
 }
 
@@ -334,15 +341,25 @@ impl Browser for WayfernBrowser {
 
   fn is_version_downloaded(&self, version: &str, binaries_dir: &Path) -> bool {
     let install_dir = binaries_dir.join("wayfern").join(version);
+    let shared_install = crate::app_dirs::shared_release_wayfern_version_dir(version);
 
     #[cfg(target_os = "macos")]
-    return macos::is_wayfern_version_downloaded(&install_dir);
+    return macos::is_wayfern_version_downloaded(&install_dir)
+      || shared_install
+        .as_deref()
+        .is_some_and(macos::is_wayfern_version_downloaded);
 
     #[cfg(target_os = "linux")]
-    return linux::is_wayfern_version_downloaded(&install_dir);
+    return linux::is_wayfern_version_downloaded(&install_dir)
+      || shared_install
+        .as_deref()
+        .is_some_and(linux::is_wayfern_version_downloaded);
 
     #[cfg(target_os = "windows")]
-    return windows::is_wayfern_version_downloaded(&install_dir);
+    return windows::is_wayfern_version_downloaded(&install_dir)
+      || shared_install
+        .as_deref()
+        .is_some_and(windows::is_wayfern_version_downloaded);
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     false
@@ -363,6 +380,75 @@ impl Browser for WayfernBrowser {
   }
 }
 
+/// CBrowser is the bundled autonomous Chromium engine. An optional compatible
+/// executable override may be selected by the user.
+pub struct CBrowser;
+
+impl Browser for CBrowser {
+  fn get_executable_path(
+    &self,
+    _install_dir: &Path,
+  ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    crate::cbrowser_manager::resolve_binary_path()
+      .map(|(path, _)| path)
+      .ok_or_else(|| "CBrowser binary is not configured".into())
+  }
+
+  fn create_launch_args(
+    &self,
+    profile_path: &str,
+    proxy_settings: Option<&ProxySettings>,
+    url: Option<String>,
+    remote_debugging_port: Option<u16>,
+    headless: bool,
+  ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut args = vec![
+      format!("--user-data-dir={profile_path}"),
+      "--no-first-run".to_string(),
+      "--no-default-browser-check".to_string(),
+      "--disable-background-mode".to_string(),
+      "--disable-session-crashed-bubble".to_string(),
+      "--hide-crash-restore-bubble".to_string(),
+      "--remote-allow-origins=*".to_string(),
+    ];
+    if let Some(port) = remote_debugging_port {
+      args.push("--remote-debugging-address=127.0.0.1".to_string());
+      args.push(format!("--remote-debugging-port={port}"));
+    }
+    if headless {
+      args.push("--headless=new".to_string());
+    }
+    if let Some(proxy) = proxy_settings {
+      args.push(format!(
+        "--proxy-server={}://{}:{}",
+        if proxy.proxy_type.eq_ignore_ascii_case("http") {
+          "http"
+        } else {
+          "socks5"
+        },
+        proxy.host,
+        proxy.port
+      ));
+    }
+    if let Some(url) = url {
+      args.push(url);
+    }
+    Ok(args)
+  }
+
+  fn is_version_downloaded(&self, version: &str, _binaries_dir: &Path) -> bool {
+    version == crate::cbrowser_manager::EXTERNAL_VERSION && crate::cbrowser_manager::is_available()
+  }
+
+  fn prepare_executable(&self, executable_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if executable_path.is_file() {
+      Ok(())
+    } else {
+      Err("CBrowser executable does not exist".into())
+    }
+  }
+}
+
 pub struct BrowserFactory;
 
 impl BrowserFactory {
@@ -377,6 +463,7 @@ impl BrowserFactory {
   pub fn create_browser(&self, browser_type: BrowserType) -> Box<dyn Browser> {
     match browser_type {
       BrowserType::Wayfern => Box::new(WayfernBrowser::new()),
+      BrowserType::Cloak => Box::new(CBrowser),
     }
   }
 }
@@ -653,6 +740,34 @@ mod tests {
       !has_sibling_dll(&root_exe),
       "libraries in a sibling subdirectory must not validate a bare root .exe"
     );
+  }
+
+  #[test]
+  fn cloak_is_a_first_class_local_automation_engine() {
+    assert_eq!(BrowserType::from_str("cloak"), Ok(BrowserType::Cloak));
+    assert_eq!(BrowserType::Cloak.as_str(), "cloak");
+    assert!(BrowserType::supports_local_automation("cloak"));
+
+    let args = CBrowser
+      .create_launch_args(
+        "C:/profiles/one",
+        Some(&ProxySettings {
+          proxy_type: "socks5".to_string(),
+          host: "127.0.0.1".to_string(),
+          port: 1080,
+          username: None,
+          password: None,
+          vless_uri: None,
+        }),
+        Some("https://example.com".to_string()),
+        Some(9222),
+        true,
+      )
+      .unwrap();
+    assert!(args.contains(&"--user-data-dir=C:/profiles/one".to_string()));
+    assert!(args.contains(&"--remote-debugging-port=9222".to_string()));
+    assert!(args.contains(&"--proxy-server=socks5://127.0.0.1:1080".to_string()));
+    assert!(args.contains(&"--headless=new".to_string()));
   }
 
   #[test]

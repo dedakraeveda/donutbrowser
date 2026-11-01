@@ -113,6 +113,13 @@ impl ProfileManager {
           .into(),
       );
     }
+    BrowserType::from_str(browser).map_err(|error| error.to_string())?;
+    if browser == "cloak"
+      && (version != crate::cbrowser_manager::EXTERNAL_VERSION
+        || !crate::cbrowser_manager::is_available())
+    {
+      return Err(crate::backend_error("CLOAK_BINARY_NOT_CONFIGURED").into());
+    }
 
     // Check if a profile with this name already exists (case insensitive)
     let existing_profiles = self.list_profiles()?;
@@ -273,7 +280,7 @@ impl ProfileManager {
 
       Some(config)
     } else {
-      wayfern_config.clone()
+      None
     };
 
     let profile = BrowserProfile {
@@ -645,12 +652,11 @@ impl ProfileManager {
     // reaches this direction once the newer binary is already gone from disk,
     // so refusing would strand the profile pointing at a missing executable.
     // Every other direction falls through untouched.
-    let target_speaks_identity_api = crate::wayfern_manager::supports_identity_api(version);
-    if let Some(cfg) = profile
-      .wayfern_config
-      .as_mut()
-      .filter(|c| c.identity_id.is_some() && !target_speaks_identity_api)
-    {
+    let target_speaks_identity_api =
+      profile.browser == "wayfern" && crate::wayfern_manager::supports_identity_api(version);
+    if let Some(cfg) = profile.wayfern_config.as_mut().filter(|c| {
+      profile.browser == "wayfern" && c.identity_id.is_some() && !target_speaks_identity_api
+    }) {
       cfg.identity_id = None;
       cfg.identity_baseline = None;
       cfg.fingerprint = None;
@@ -1428,7 +1434,8 @@ impl ProfileManager {
         let cmd = process.cmd();
         // Verify this process is actually our browser with the correct profile
         let profiles_dir = self.get_profiles_dir();
-        let profile_data_path = profile.get_profile_data_path(&profiles_dir);
+        let profile_data_path =
+          crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
         let profile_data_path_str = profile_data_path.to_string_lossy();
         let profile_path_match = cmd.iter().any(|s| {
           let arg = s.to_str().unwrap_or("");
@@ -1457,6 +1464,11 @@ impl ProfileManager {
                 || exe_name.contains("chromium")
                 || exe_name.contains("chrome")
             }
+            "cloak" => {
+              exe_name.contains("cloak")
+                || exe_name.contains("chromium")
+                || exe_name.contains("chrome")
+            }
             _ => false,
           };
 
@@ -1466,7 +1478,8 @@ impl ProfileManager {
 
           // Check for profile path match
           let profiles_dir = self.get_profiles_dir();
-          let profile_data_path = profile.get_profile_data_path(&profiles_dir);
+          let profile_data_path =
+            crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
           let profile_data_path_str = profile_data_path.to_string_lossy();
           let profile_path_match = cmd.iter().any(|s| {
             let arg = s.to_str().unwrap_or("");
@@ -2000,10 +2013,7 @@ pub async fn create_browser_profile_new(
 ) -> Result<BrowserProfile, String> {
   let fingerprint_os = wayfern_config.as_ref().and_then(|c| c.os.as_deref());
 
-  if !crate::cloud_auth::CLOUD_AUTH
-    .is_fingerprint_os_allowed(fingerprint_os)
-    .await
-  {
+  if !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(fingerprint_os).await {
     return Err(serde_json::json!({ "code": "FINGERPRINT_REQUIRES_PRO" }).to_string());
   }
 
@@ -2037,16 +2047,12 @@ pub async fn update_wayfern_config(
   config: WayfernConfig,
 ) -> Result<(), String> {
   if config.fingerprint.is_some()
-    && !crate::cloud_auth::CLOUD_AUTH
-      .can_use_cross_os_fingerprints()
-      .await
+    && !crate::entitlements::EntitlementsPolicy::can_edit_fingerprints().await
   {
     return Err(serde_json::json!({ "code": "FINGERPRINT_REQUIRES_PRO" }).to_string());
   }
 
-  if !crate::cloud_auth::CLOUD_AUTH
-    .is_fingerprint_os_allowed(config.os.as_deref())
-    .await
+  if !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(config.os.as_deref()).await
   {
     return Err(serde_json::json!({ "code": "FINGERPRINT_REQUIRES_PRO" }).to_string());
   }

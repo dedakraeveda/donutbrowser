@@ -62,13 +62,19 @@ impl BrowserVersionManager {
             | "windows-arm64"
         ))
       }
+      // The bundled CBrowser runtime currently targets x64 Windows/Linux
+      // and x64/arm64 macOS. The binary itself remains user-installed.
+      "cloak" => Ok(matches!(
+        (os.as_str(), arch.as_str()),
+        ("windows", "x64") | ("linux", "x64") | ("macos", "x64" | "arm64")
+      )),
       _ => Err(format!("Unknown browser: {browser}").into()),
     }
   }
 
   /// Get list of browsers supported on the current platform
   pub fn get_supported_browsers(&self) -> Vec<String> {
-    let all_browsers = vec!["wayfern"];
+    let all_browsers = vec!["wayfern", "cloak"];
 
     all_browsers
       .into_iter()
@@ -114,8 +120,21 @@ impl BrowserVersionManager {
     &self,
     browser: &str,
   ) -> Result<BrowserReleaseTypes, Box<dyn std::error::Error + Send + Sync>> {
+    if browser == "cloak" {
+      return Ok(BrowserReleaseTypes {
+        stable: Some(crate::cbrowser_manager::EXTERNAL_VERSION.to_string()),
+      });
+    }
     if browser != "wayfern" {
       return Err(format!("Unsupported browser: {browser}").into());
+    }
+
+    if crate::entitlements::EntitlementsPolicy::update_downloads_blocked() {
+      let versions = crate::downloaded_browsers_registry::DownloadedBrowsersRegistry::instance()
+        .get_downloaded_versions(browser);
+      return Ok(BrowserReleaseTypes {
+        stable: versions.first().cloned(),
+      });
     }
 
     // Only trust an unexpired cache. A stale entry can point at a version that
@@ -172,6 +191,7 @@ impl BrowserVersionManager {
     // Fetch fresh versions from API
     let fresh_versions = match browser {
       "wayfern" => self.fetch_wayfern_versions(true).await?,
+      "cloak" => vec![crate::cbrowser_manager::EXTERNAL_VERSION.to_string()],
       _ => return Err(format!("Unsupported browser: {browser}").into()),
     };
 
@@ -234,7 +254,7 @@ impl BrowserVersionManager {
     // Since we don't have detailed date/prerelease info for cached versions,
     // we'll fetch fresh detailed info and map it to our merged versions
     let detailed_info: Vec<BrowserVersionInfo> = match browser {
-      "wayfern" => merged_versions
+      "wayfern" | "cloak" => merged_versions
         .into_iter()
         .map(|version| BrowserVersionInfo {
           version: version.clone(),
@@ -322,6 +342,10 @@ impl BrowserVersionManager {
           is_archive,
         })
       }
+      "cloak" => Err(
+        "CBrowser is supplied by the bundled .local/cbrowser runtime and is not downloaded through Donut"
+          .into(),
+      ),
       _ => Err(format!("Unsupported browser: {browser}").into()),
     }
   }

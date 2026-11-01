@@ -185,6 +185,10 @@ impl Downloader {
 
         Ok(download_url)
       }
+      BrowserType::Cloak => Err(
+        "CBrowser is supplied by the bundled .local/cbrowser runtime and is not downloaded through Donut"
+          .into(),
+      ),
     }
   }
 
@@ -532,6 +536,12 @@ impl Downloader {
     browser_str: String,
     version: String,
   ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    if browser_str == "wayfern"
+      && crate::entitlements::EntitlementsPolicy::update_downloads_blocked()
+    {
+      return Err(crate::app_auto_updater::manual_update_policy_error().into());
+    }
+
     // Only check Wayfern terms if Wayfern is already downloaded
     let terms_manager = crate::wayfern_terms::WayfernTermsManager::instance();
     if terms_manager.is_wayfern_downloaded() && !terms_manager.is_terms_accepted() {

@@ -1225,8 +1225,13 @@ impl CloudAuthManager {
     Ok(())
   }
 
-  /// Get the current wayfern token, if any.
+  /// Get the current Wayfern token, if any. Authorized fork deployments may
+  /// provide an externally issued token without storing it in app settings.
   pub async fn get_wayfern_token(&self) -> Option<String> {
+    if let Some(token) = crate::entitlements::external_wayfern_token() {
+      return Some(token);
+    }
+
     #[cfg(feature = "e2e")]
     if crate::e2e_automation_enabled() {
       if let Some(token) = std::env::var_os("WAYFERN_TEST_TOKEN")

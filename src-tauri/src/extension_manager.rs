@@ -398,6 +398,20 @@ pub(crate) fn path_is_load_extension_safe(path: &Path) -> bool {
   !path.to_string_lossy().contains(',')
 }
 
+fn linked_path_for_storage(path: &Path) -> String {
+  let value = path.to_string_lossy();
+  #[cfg(target_os = "windows")]
+  {
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+      return format!(r"\\{unc}");
+    }
+    if let Some(local) = value.strip_prefix(r"\\?\") {
+      return local.to_string();
+    }
+  }
+  value.into_owned()
+}
+
 fn err_code(code: &str) -> Box<dyn std::error::Error> {
   serde_json::json!({ "code": code }).to_string().into()
 }
@@ -693,7 +707,7 @@ impl ExtensionManager {
       author,
       homepage_url,
       source_kind: SOURCE_KIND_UNPACKED.to_string(),
-      linked_path: Some(absolute.to_string_lossy().to_string()),
+      linked_path: Some(linked_path_for_storage(&absolute)),
     };
 
     if let Some((icon_data, icon_ext)) = extract_icon_from_dir(&absolute, manifest) {
@@ -956,7 +970,7 @@ impl ExtensionManager {
     ext.file_type = "unpacked".to_string();
     ext.browser_compatibility = determine_browser_compatibility(&ext.file_type);
     ext.source_kind = SOURCE_KIND_UNPACKED.to_string();
-    ext.linked_path = Some(absolute.to_string_lossy().to_string());
+    ext.linked_path = Some(linked_path_for_storage(&absolute));
     // The path only exists on this machine, so there is nothing to sync.
     ext.sync_enabled = false;
 
@@ -2181,7 +2195,7 @@ mod tests {
 
     let mgr = ExtensionManager::new();
     let source = write_unpacked_fixture(&tmp.path().join("linked-extension"), "Linked Fixture");
-    let canonical = source.canonicalize().unwrap().to_string_lossy().to_string();
+    let canonical = linked_path_for_storage(&source.canonicalize().unwrap());
     let ext = mgr
       .add_unpacked_extension("Ignored".to_string(), &source, true)
       .unwrap();

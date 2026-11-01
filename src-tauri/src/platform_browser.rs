@@ -387,45 +387,36 @@ pub mod windows {
   pub async fn kill_browser_process_impl(
     pid: u32,
   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // First try using sysinfo (cross-platform approach)
-    use sysinfo::{Pid, System};
-    let system = System::new_all();
-    if let Some(process) = system.process(Pid::from(pid as usize)) {
-      if process.kill() {
-        log::info!("Successfully killed browser process with PID: {pid}");
-        return Ok(());
-      }
-    }
-
-    // Fallback to Windows-specific process termination
-    use std::process::Command;
-
-    // Try taskkill command as fallback
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+
+    // Chromium uses a multi-process tree. Killing only the browser PID can
+    // orphan renderer/network processes while Donut already reports Stopped.
+    // taskkill /T terminates the complete tree; /F is required for processes
+    // which do not own a visible top-level window.
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let output = Command::new("taskkill")
-      .args(["/F", "/PID", &pid.to_string()])
+      .args(["/F", "/T", "/PID", &pid.to_string()])
       .creation_flags(CREATE_NO_WINDOW)
-      .output();
+      .output()
+      .map_err(|e| format!("Failed to execute taskkill for process {pid}: {e}"))?;
 
-    match output {
-      Ok(result) => {
-        if result.status.success() {
-          log::info!("Successfully killed browser process with PID: {pid} using taskkill");
-          Ok(())
-        } else {
-          Err(
-            format!(
-              "Failed to kill process {} with taskkill: {}",
-              pid,
-              String::from_utf8_lossy(&result.stderr)
-            )
-            .into(),
-          )
-        }
-      }
-      Err(e) => Err(format!("Failed to execute taskkill for process {}: {}", pid, e).into()),
+    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+    let system = System::new_with_specifics(
+      RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    if system.process(Pid::from(pid as usize)).is_none() {
+      log::info!("Successfully killed browser process tree rooted at PID: {pid}");
+      return Ok(());
     }
+
+    let detail = if output.stderr.is_empty() {
+      String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+      String::from_utf8_lossy(&output.stderr).to_string()
+    };
+    Err(format!("Browser process {pid} is still running after taskkill /T /F: {detail}").into())
   }
 }
 

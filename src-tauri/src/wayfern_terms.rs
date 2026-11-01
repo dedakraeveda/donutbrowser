@@ -10,15 +10,19 @@ use crate::profile::ProfileManager;
 const ACCEPT_TERMS_FLAG: &str = "--accept-terms-and-conditions";
 const MIN_VALID_TIMESTAMP: i64 = 1577836800; // 2020-01-01 00:00:00 UTC
 
-pub struct WayfernTermsManager {
-  base_dirs: BaseDirs,
-}
+pub struct WayfernTermsManager;
 
 impl WayfernTermsManager {
   fn new() -> Self {
-    Self {
-      base_dirs: BaseDirs::new().expect("Failed to get base directories"),
-    }
+    Self
+  }
+
+  fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+      .or_else(|| std::env::var_os("USERPROFILE"))
+      .map(PathBuf::from)
+      .or_else(|| BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+      .unwrap_or_else(std::env::temp_dir)
   }
 
   pub fn instance() -> &'static WayfernTermsManager {
@@ -35,9 +39,7 @@ impl WayfernTermsManager {
           .join("license-accepted");
       }
       // Fallback to home directory
-      self
-        .base_dirs
-        .home_dir()
+      Self::home_dir()
         .join("AppData")
         .join("Roaming")
         .join("Wayfern")
@@ -47,9 +49,7 @@ impl WayfernTermsManager {
     #[cfg(target_os = "macos")]
     {
       // macOS: ~/Library/Application Support/Wayfern/license-accepted
-      self
-        .base_dirs
-        .home_dir()
+      Self::home_dir()
         .join("Library")
         .join("Application Support")
         .join("Wayfern")
@@ -65,9 +65,7 @@ impl WayfernTermsManager {
           return xdg_path.join("Wayfern").join("license-accepted");
         }
       }
-      self
-        .base_dirs
-        .home_dir()
+      Self::home_dir()
         .join(".config")
         .join("Wayfern")
         .join("license-accepted")

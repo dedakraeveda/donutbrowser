@@ -202,10 +202,274 @@ impl BrowserRunner {
     browser_dir.push(&profile.browser);
     browser_dir.push(&profile.version);
 
-    // Get platform-specific executable path
-    browser
-      .get_executable_path(&browser_dir)
-      .map_err(|e| format!("Failed to get executable path for {}: {e}", profile.browser).into())
+    // Prefer this build's own install. A non-relocated debug fork may fall
+    // back to an existing release Wayfern version in place, avoiding a second
+    // multi-hundred-megabyte browser copy. Cloak resolves its external path in
+    // its Browser implementation and never reaches this fallback.
+    match browser.get_executable_path(&browser_dir) {
+      Ok(path) => Ok(path),
+      Err(primary_error) if profile.browser == "wayfern" => {
+        let shared = crate::app_dirs::shared_release_wayfern_version_dir(&profile.version)
+          .ok_or_else(|| {
+            format!(
+              "Failed to get executable path for {}: {primary_error}",
+              profile.browser
+            )
+          })?;
+        browser.get_executable_path(&shared).map_err(|shared_error| {
+          format!(
+            "Failed to get executable path for {} in local and shared installs: {primary_error}; {shared_error}",
+            profile.browser
+          )
+          .into()
+        })
+      }
+      Err(error) => Err(
+        format!(
+          "Failed to get executable path for {}: {error}",
+          profile.browser
+        )
+        .into(),
+      ),
+    }
+  }
+
+  async fn launch_cloak_internal(
+    &self,
+    app_handle: tauri::AppHandle,
+    profile: &BrowserProfile,
+    url: Option<String>,
+    remote_debugging_port: Option<u16>,
+    headless: bool,
+    gate: &crate::launch_gate::FingerprintGate,
+  ) -> Result<BrowserProfile, Box<dyn std::error::Error + Send + Sync>> {
+    if !crate::cbrowser_manager::is_available() {
+      return Err(crate::backend_error("CLOAK_BINARY_NOT_CONFIGURED").into());
+    }
+
+    let mut upstream_proxy = self
+      .resolve_launch_proxy(profile)
+      .await
+      .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+
+    struct CloakRouteGuard {
+      app_handle: tauri::AppHandle,
+      routing_pid: Option<u32>,
+      xray_worker_id: Option<String>,
+      vpn_worker_id: Option<String>,
+      vpn_worker_created: bool,
+      vpn_id: Option<String>,
+      browser_pid: Option<u32>,
+      browser_profile_path: Option<PathBuf>,
+      profile_name: String,
+    }
+    impl Drop for CloakRouteGuard {
+      fn drop(&mut self) {
+        if let (Some(pid), Some(profile_path)) =
+          (self.browser_pid.take(), self.browser_profile_path.take())
+        {
+          tauri::async_runtime::spawn(async move {
+            let _ = crate::cbrowser_manager::stop(&profile_path, Some(pid)).await;
+          });
+        }
+        if let Some(pid) = self.routing_pid.take() {
+          let app_handle = self.app_handle.clone();
+          tauri::async_runtime::spawn(async move {
+            let _ = PROXY_MANAGER.stop_proxy(app_handle, pid).await;
+          });
+        }
+        if let Some(worker_id) = self.xray_worker_id.take() {
+          let _ = crate::xray_worker_runner::stop_xray_worker_now(&worker_id);
+        }
+        if self.vpn_worker_created {
+          if let (Some(worker_id), Some(vpn_id)) = (self.vpn_worker_id.take(), self.vpn_id.take()) {
+            tauri::async_runtime::spawn(async move {
+              let _adopt_guard = crate::vpn_worker_runner::lock_vpn_starts().await;
+              if !crate::vpn_worker_runner::vpn_id_in_use_by_running_browser(&vpn_id) {
+                let _ = crate::vpn_worker_runner::stop_vpn_worker(&worker_id).await;
+              }
+            });
+          }
+        }
+        log::debug!(
+          "Cloak launch route guard released for {}",
+          self.profile_name
+        );
+      }
+    }
+
+    let mut route_guard = CloakRouteGuard {
+      app_handle: app_handle.clone(),
+      routing_pid: None,
+      xray_worker_id: None,
+      vpn_worker_id: None,
+      vpn_worker_created: false,
+      vpn_id: profile.vpn_id.clone(),
+      browser_pid: None,
+      browser_profile_path: None,
+      profile_name: profile.name.clone(),
+    };
+
+    if upstream_proxy
+      .as_ref()
+      .is_some_and(|proxy| proxy.proxy_type.eq_ignore_ascii_case("vless"))
+    {
+      let vless_uri = upstream_proxy
+        .as_ref()
+        .and_then(|proxy| proxy.vless_uri.as_deref())
+        .ok_or_else(|| crate::backend_error("VLESS_CONFIG_INVALID"))?;
+      let worker =
+        crate::xray_worker_runner::start_xray_worker(Some(&profile.id.to_string()), vless_uri)
+          .await
+          .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
+      route_guard.xray_worker_id = Some(worker.id.clone());
+      upstream_proxy = Some(worker.local_proxy_settings());
+    }
+
+    if upstream_proxy.is_none() {
+      if let Some(vpn_id) = profile.vpn_id.as_deref() {
+        let started = crate::vpn_worker_runner::start_vpn_worker_tracked(vpn_id)
+          .await
+          .map_err(|e| crate::backend_error_with_detail("VPN_WORKER_START_FAILED", e))?;
+        route_guard.vpn_worker_id = Some(started.config.id.clone());
+        route_guard.vpn_worker_created = started.created;
+        if let Some(port) = started.config.local_port {
+          upstream_proxy = Some(ProxySettings {
+            proxy_type: "socks5".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            username: None,
+            password: None,
+            vless_uri: None,
+          });
+        }
+      }
+    }
+
+    let (blocklist, gate_result) = tokio::join!(
+      Self::resolve_blocklist_file(profile),
+      crate::launch_gate::enforce_fingerprint_gate(profile, upstream_proxy.as_ref(), gate),
+    );
+    gate_result.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    let (blocklist_file, dns_allowlist_mode) = blocklist?;
+    Self::fire_launch_hook(profile);
+
+    let profile_id = profile.id.to_string();
+    let placeholder_pid = crate::proxy_manager::next_launch_placeholder_pid();
+    let local_proxy = PROXY_MANAGER
+      .start_proxy(
+        app_handle.clone(),
+        upstream_proxy.as_ref(),
+        placeholder_pid,
+        Some(&profile_id),
+        profile.proxy_bypass_rules.clone(),
+        blocklist_file,
+        dns_allowlist_mode,
+        "socks5",
+      )
+      .await
+      .map_err(|e| crate::wrap_backend_error(e, "Failed to start local proxy for Cloak"))?;
+    route_guard.routing_pid = Some(placeholder_pid);
+
+    if profile.password_protected {
+      crate::profile::password::prepare_for_launch(profile)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    } else if profile.ephemeral {
+      crate::ephemeral_dirs::create_ephemeral_dir(&profile_id)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    }
+
+    let profiles_dir = self.profile_manager.get_profiles_dir();
+    let profile_data_path =
+      crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
+    match crate::profile_import::repair_legacy_layout(&profile_data_path) {
+      Ok(true) => log::info!(
+        "Repaired legacy import layout for Cloak profile {}",
+        profile.name
+      ),
+      Ok(false) => {}
+      Err(error) => log::warn!(
+        "Could not repair legacy import layout for Cloak profile {}: {error}",
+        profile.name
+      ),
+    }
+
+    let mut extension_paths = Vec::new();
+    if profile.extension_group_id.is_some() {
+      let manager = crate::extension_manager::EXTENSION_MANAGER.lock().unwrap();
+      extension_paths = manager
+        .install_extensions_for_profile(profile, &profile_data_path)
+        .unwrap_or_else(|error| {
+          log::warn!("Failed to install extensions for Cloak profile: {error}");
+          Vec::new()
+        });
+    }
+
+    let result = crate::cbrowser_manager::launch(
+      profile,
+      &profile_data_path,
+      Some(&local_proxy),
+      url.as_deref(),
+      &extension_paths,
+      remote_debugging_port,
+      headless,
+    )
+    .await
+    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+    route_guard.browser_pid = Some(result.process_id);
+    route_guard.browser_profile_path = Some(profile_data_path.clone());
+
+    PROXY_MANAGER
+      .update_proxy_pid(placeholder_pid, result.process_id)
+      .map_err(|e| crate::backend_error_with_detail("INTERNAL_ERROR", e))?;
+    route_guard.routing_pid = Some(result.process_id);
+    if !PROXY_MANAGER.set_browser_pid_for_profile(&profile_id, result.process_id) {
+      return Err(crate::backend_error("INTERNAL_ERROR").into());
+    }
+    if let Some(worker_id) = route_guard.xray_worker_id.as_deref() {
+      if !crate::xray_worker_runner::set_browser_pid(worker_id, result.process_id) {
+        return Err(crate::backend_error("XRAY_START_FAILED").into());
+      }
+    }
+
+    let mut updated_profile = profile.clone();
+    updated_profile.process_id = Some(result.process_id);
+    updated_profile.last_launch = Some(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+    self.save_process_info(&updated_profile)?;
+
+    // Every worker now watches a browser whose PID is durably recorded. Disarm
+    // only here so a mapping or persistence failure cannot leak either side.
+    route_guard.routing_pid = None;
+    route_guard.xray_worker_id = None;
+    route_guard.vpn_worker_id = None;
+    route_guard.browser_pid = None;
+    route_guard.browser_profile_path = None;
+
+    let _ = crate::tag_manager::TAG_MANAGER.lock().map(|manager| {
+      let _ =
+        manager.rebuild_from_profiles(&self.profile_manager.list_profiles().unwrap_or_default());
+    });
+    let _ = events::emit_empty("profiles-changed");
+    let _ = events::emit("profile-updated", &updated_profile);
+    #[derive(Serialize)]
+    struct RunningChangedPayload {
+      id: String,
+      is_running: bool,
+    }
+    let _ = events::emit(
+      "profile-running-changed",
+      &RunningChangedPayload {
+        id: profile_id,
+        is_running: true,
+      },
+    );
+    log::info!(
+      "Cloak launched profile {} with PID {} and CDP port {}",
+      profile.name,
+      result.process_id,
+      result.cdp_port
+    );
+    Ok(updated_profile)
   }
 
   async fn launch_browser_internal(
@@ -217,6 +481,19 @@ impl BrowserRunner {
     headless: bool,
     gate: &crate::launch_gate::FingerprintGate,
   ) -> Result<BrowserProfile, Box<dyn std::error::Error + Send + Sync>> {
+    if profile.browser == "cloak" {
+      return self
+        .launch_cloak_internal(
+          app_handle,
+          profile,
+          url,
+          remote_debugging_port,
+          headless,
+          gate,
+        )
+        .await;
+    }
+
     // Handle Wayfern profiles using WayfernManager
     if profile.browser == "wayfern" {
       // Get or create wayfern config
@@ -809,6 +1086,15 @@ impl BrowserRunner {
     url: &str,
     _internal_proxy_settings: Option<&ProxySettings>,
   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if profile.browser == "cloak" {
+      let profiles_dir = self.profile_manager.get_profiles_dir();
+      let profile_data_path =
+        crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
+      return crate::cbrowser_manager::open_url(&profile_data_path, url)
+        .await
+        .map_err(Into::into);
+    }
+
     // Handle Wayfern profiles using WayfernManager
     if profile.browser == "wayfern" {
       let profiles_dir = self.profile_manager.get_profiles_dir();
@@ -1052,6 +1338,51 @@ impl BrowserRunner {
     app_handle: tauri::AppHandle,
     profile: &BrowserProfile,
   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if profile.browser == "cloak" {
+      let profiles_dir = self.profile_manager.get_profiles_dir();
+      let profile_data_path =
+        crate::ephemeral_dirs::get_effective_profile_path(profile, &profiles_dir);
+      let profile_id = profile.id.to_string();
+
+      let _ = PROXY_MANAGER
+        .stop_proxy_by_profile_id(app_handle.clone(), &profile_id)
+        .await;
+      let _ = crate::xray_worker_runner::stop_xray_worker_by_profile_id(&profile_id).await;
+      crate::cbrowser_manager::stop(&profile_data_path, profile.process_id)
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+
+      let mut updated_profile = profile.clone();
+      updated_profile.process_id = None;
+      self.save_process_info(&updated_profile)?;
+      if profile.password_protected {
+        crate::profile::password::complete_after_quit_and_wait(profile).await;
+      } else if profile.ephemeral {
+        crate::ephemeral_dirs::remove_ephemeral_dir(&profile_id);
+        crate::traffic_stats::delete_traffic_stats(&profile_id);
+      } else if profile.clear_on_close {
+        crate::profile::clear_on_close::clear_profile_browsing_data(profile).await;
+      }
+      crate::extension_manager::ExtensionManager::cleanup_unpacked_for_profile(&profile_id);
+      let _ = events::emit("profile-updated", &updated_profile);
+      #[derive(Serialize)]
+      struct CloakRunningChangedPayload {
+        id: String,
+        is_running: bool,
+      }
+      let _ = events::emit(
+        "profile-running-changed",
+        &CloakRunningChangedPayload {
+          id: profile_id,
+          is_running: false,
+        },
+      );
+      let _ = self
+        .downloaded_browsers_registry
+        .consolidate_browser_versions(&app_handle);
+      return Ok(());
+    }
+
     // Handle Wayfern profiles using WayfernManager
     if profile.browser == "wayfern" {
       let profiles_dir = self.profile_manager.get_profiles_dir();
@@ -1790,7 +2121,6 @@ pub async fn launch_browser_profile_impl(
 
 #[tauri::command]
 pub fn check_browser_exists(browser_str: String, version: String) -> bool {
-  // This is an alias for is_browser_downloaded to provide clearer semantics for auto-updates
   let runner = BrowserRunner::instance();
   runner
     .downloaded_browsers_registry

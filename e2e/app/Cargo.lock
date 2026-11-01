@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "donutbrowser"
-version = "0.29.4"
+version = "0.29.6+authorized.7"
 dependencies = [
  "aes 0.9.1",
  "aes-gcm 0.11.0",
@@ -6483,9 +6483,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.5"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c8bd2130a9b60bee2581bf82cfe89ee836424d1f37dcfa4ce21509611684673"
+checksum = "cd9f9fe3d2b7b75cf4f2805e5b9926e8ac47146667b16b86298c4a8bf08cc469"
 dependencies = [
  "libc",
  "memchr",

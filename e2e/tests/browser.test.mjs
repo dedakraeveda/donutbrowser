@@ -178,12 +178,31 @@ test("real Wayfern fingerprinting, terms, API automation, CDP, cookies, and proc
     assert.deepEqual(await app.invoke("check_missing_binaries"), []);
     assert.deepEqual(await app.invoke("ensure_all_binaries_exist"), []);
     assert.deepEqual(await app.invoke("ensure_active_browsers_downloaded"), []);
-    assert.deepEqual(await app.invoke("get_supported_browsers"), ["wayfern"]);
+    assert.deepEqual(await app.invoke("get_supported_browsers"), [
+      "wayfern",
+      "cloak",
+    ]);
     assert.equal(
       await app.invoke("is_browser_supported_on_platform", {
         browserStr: "wayfern",
       }),
       true,
+    );
+    assert.equal(
+      await app.invoke("is_browser_supported_on_platform", {
+        browserStr: "cloak",
+      }),
+      true,
+    );
+    const cloakStatus = await app.invoke("get_cloak_engine_status");
+    assert.equal(cloakStatus.bundled, true);
+    assert.equal(cloakStatus.version, "external");
+    assert.match(cloakStatus.path, /\.local[\\/]cbrowser[\\/].*chrome\.exe/i);
+    assert.match(
+      await app.invokeError("set_cloak_binary_path", {
+        path: app.path("missing-cloak.exe"),
+      }),
+      /CLOAK_BINARY_INVALID/,
     );
     assert.ok(
       (

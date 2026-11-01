@@ -71,6 +71,10 @@ pub struct AppSettings {
   /// copy is always re-encrypted regardless of this flag.
   #[serde(default)]
   pub keep_decrypted_profiles_in_ram: bool,
+  /// Optional machine-local override for the bundled CBrowser executable.
+  /// The binary is never copied into Donut or synced.
+  #[serde(default)]
+  pub cloak_binary_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -109,6 +113,7 @@ impl Default for AppSettings {
       onboarding_completed: false,
       disable_auto_updates: false,
       keep_decrypted_profiles_in_ram: false,
+      cloak_binary_path: None,
     }
   }
 }
@@ -807,6 +812,9 @@ pub async fn save_app_settings(
   if let Ok(content) = std::fs::read_to_string(manager.get_settings_file()) {
     if let Ok(current) = serde_json::from_str::<AppSettings>(&content) {
       settings.window_resize_warning_dismissed = current.window_resize_warning_dismissed;
+      // Cloak setup is owned by the dedicated binary picker. A settings dialog
+      // opened before that picker ran must not overwrite its machine-local path.
+      settings.cloak_binary_path = current.cloak_binary_path;
     }
   }
 
@@ -1205,6 +1213,7 @@ mod tests {
       onboarding_completed: false,
       disable_auto_updates: false,
       keep_decrypted_profiles_in_ram: false,
+      cloak_binary_path: None,
     };
 
     let save_result = manager.save_settings(&test_settings);
