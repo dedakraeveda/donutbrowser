@@ -1,7 +1,71 @@
-# Wayfern155 — initial fork/licensing assessment
+# Wayfern155 — authorized adaptation and verification
 
-Status: AUTHORIZED_ADAPTATION_IN_PROGRESS. Original input immutable; no modified
-engine or native parity result is claimed yet.
+Status: WINDOWS_NATIVE_DIAGNOSTIC_VERIFIED; MANAGER_BUILDS_VERIFIED_3_TARGETS;
+FULL_MANAGER_RUNTIME_INTEGRATION_PENDING.
+Original input is immutable. The local native candidate is binary-modified,
+not rebuilt from Chromium C++ sources and not eligible for production release.
+
+## Current verified checkpoint
+
+- Windows155 candidate `reproduced-native06`: exact DLL SHA256
+  `54c30c2a9a73fbc48bb379369c48c1f1f04dc53f3e5d4eada5d57cae40e09185`.
+  Native stress evidence: 30 identity generations, 300 CDP operations, six
+  concurrent synthetic profiles, cross-OS identity and legacy fingerprint
+  replay, negative input refusal and relaunch stability. These are Windows
+  tests with simulated device identities, NOT Linux/macOS runtime tests.
+- `wayfern_native_policy.py` reproduces only the pinned engine. All 2,381
+  original resources are pinned by `wayfern-original-files.json` (including
+  DLL/EXE); extra/missing/changed resources fail closed. A rewritten result
+  manifest alone cannot authorize an extra file. Failed copies remove only
+  their own fresh staging directory. No personal profiles or vendor tokens.
+- Policy Python unit tests: **14 PASS**. Real candidate verification: **2,382
+  files PASS**, including the added marker (manifest excludes itself).
+- Unmodified Rust `wayfern_local_policy.rs` compiled in a bounded isolated
+  module harness: **5 PASS**, including matching the actual candidate, missing
+  marker stock behavior, false hash claims and oversized/invalid markers.
+  Profile lookup is a TEST-ONLY stub: this does NOT verify full Donut compile,
+  manager lifecycle, cloud-call omission, REST/MCP or native app E2E.
+- Own policy is offline/local, hash-gated. No signed licensing server exists.
+  Vendor-hosted services are not granted or impersonated.
+- Published resource hardening: `151367f4be09aea6d5056524533659dda0e807d7`.
+  All 87 overlay hashes matched. Owner unblocked GitHub Actions; original
+  HTTP422 restriction is resolved. Native run41454022962 completed Linux x64
+  and macOS x64: TypeScript/frontend build, Cargo fmt, all-target/all-feature
+  check, 4 policy unit tests and optimized manager/sidecar build PASS on each.
+  Downloaded archives and every member SHA256 verified; executable headers
+  confirm ELF64 x86_64 / Mach-O64 x86_64 respectively.
+  Linux ZIP SHA256:
+  `278e98b180710ffe83258668cd7fd41f4fba2df6eb8fe184c488252f4d24c9d2`.
+  macOS x64 ZIP SHA256:
+  `11623f7bc944701662bf6035c14be54e5f6f3fd74ae3b1e4544d133ee8fa97d2`.
+  These are manager-only binaries, NOT complete browser kits or verified GUI
+  runtime. They are retained under the task's D: ci-41454022962-* directories.
+  Initial Windows ENV-key casing bug fixed in92a1781; Windows-only matrix
+  selection in6de5216. Windows run41461864388 SUCCESS, including full check,
+  policy tests, optimized manager/proxy and native E2E harness build.
+  Windows ZIP SHA256:
+  `6dbb608ba6964fa899a179febd66b4ff0a1b9736625469586de61daaefde109d`.
+  All nine members verified, PE headers confirm x64; runtime extracted to
+  D:/projects/temp/wayfern-fork-audit-20261102/ci-41461864388-windows/runtime/.
+  Fresh isolated D: launch reached native WebDriver session, Donut0.36 startup
+  and local MCP listener; test was then STOPPED by disk-resource guard before
+  form/MCP/E2E postconditions. C: fell3.32 to2.10GiB; attribution is not proven.
+  Task processes were confirmed absent after termination. This is NOT runtime
+  smoke PASS and not a Wayfern manager lifecycle test. No more local runs until
+  system-disk headroom is restored under a separately authorized operation.
+  macOS ARM64 received no hosted runner on BOTH attempts (GitHub capacity
+  warning); no ARM64 success or installed-app update claimed.
+- Installed authorized.8 and personal browser profiles were not replaced.
+  IMPORTANT historical exception: the first official terms command updated
+  the existing C: Wayfern consent marker timestamp; exact previous timestamp
+  restoration is not proven. Later isolated acceptance protected that marker.
+- Current free space after CI download/runtime attempt: C: about2.10GiB,
+  D:26.29GiB. Heavy local work is stopped; downloaded artifacts, extracted
+  runtime and isolated test state/logs are on D:. Existing user data is not
+  authorized for cleanup. Installed personal Donut and private backup retained.
+
+The sections below retain the initial investigation context; statements about
+no launch/modification there describe that earlier checkpoint only.
 
 Owner clarification (2026-11-02): after being asked specifically about Wayfern
 modification/rebranding/distribution, owner confirmed «да, конечно на wayfern
@@ -141,7 +205,9 @@ Windows path. Do not substitute old legacy engines for full-feature parity.
 
 ## Current result and rollback
 
-Only downloaded original + static/read-only source analysis, no deployment or
-engine changes. Private installed authorized.8 and all profiles untouched.
-C:4.82GiB before/after; D:38.15→34.17GiB after ZIP+extraction (~4GiB retained).
-No Git mutation or workflow dispatch in this assessment. No rollback required.
+See the current verified checkpoint above. The original input, native candidate,
+source reconstruction and diagnostics remain on D:. No personal installation
+was deployed or migrated. Rollback for local source changes is a reviewed
+file-level reversal, preserving unrelated dirty work; do not reset the repo.
+Published history is not rewritten. Production release remains blocked on full
+manager compile/E2E and native platform build verification.
