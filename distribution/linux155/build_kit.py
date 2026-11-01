@@ -28,6 +28,21 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def package_reproducer(root):
+    target = root / 'source/native-linux-reproducer.zip'
+    with zipfile.ZipFile(target, 'x', zipfile.ZIP_DEFLATED) as archive:
+        names = ['native_policy.py', 'test_native_policy.py',
+                 'wayfern-native-policy.json', 'cbrowser-native-policy.json',
+                 'launcher.py', 'build_kit.py', 'START_HERE.md', 'AGENTS.md']
+        for name in names:
+            archive.write(HERE / name, 'distribution/linux155/' + name)
+        dataset = REPO / 'distribution/native-data/155-fingerprint-tables.json'
+        if digest(dataset) != 'e1190dfb79ebd6ecd1f13e120e861219873e4b2c04e292485b7f44f15fd3d90c':
+            raise ValueError('public-native-dataset-checksum')
+        archive.write(dataset, 'distribution/native-data/155-fingerprint-tables.json')
+    return digest(target)
+
+
 def build(args):
     if sys.platform != 'linux':
         raise ValueError('assemble-on-Linux-to-preserve-file-modes')
@@ -104,7 +119,8 @@ def build(args):
                 raise ValueError('private-or-linked-source-material-refused')
             if path.is_file():
                 archive.write(path, rel.as_posix())
-    (root / 'BUILD.json').write_text(json.dumps({'kind': 'both-native-engine-linux-x64-kit-candidate',
+    native_source_sha = package_reproducer(root)
+    (root / 'BUILD.json').write_text(json.dumps({'nativeReproducerSha256': native_source_sha, 'kind': 'both-native-engine-linux-x64-kit-candidate',
         'managerBuild': ci, 'managerSourceCommit': args.commit, 'cbrowser': native.verify(root / 'cbrowser', 'cbrowser'),
         'wayfern': native.verify(root / 'wayfern', 'wayfern'), 'installed': False,
         'guiRuntimeVerifiedByBuilder': False, 'completeUpstreamE2E': False,

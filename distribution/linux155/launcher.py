@@ -75,7 +75,8 @@ def preflight(graphical=False):
     if len(str(STATE / 'tmp').encode()) > 55:
         raise ValueError('extract-to-shorter-path-for-Chromium-Unix-sockets')
     return {'ok': True, 'managerPresent': True, 'enginesBundled': ['cbrowser', 'wayfern'],
-            'sandboxDisabled': False, 'state': str(STATE)}
+            'launcherAddsNoSandboxFlags': False, 'wayfernManagerLinuxSandboxDisabled': True,
+            'state': str(STATE)}
 
 
 def initial_state():

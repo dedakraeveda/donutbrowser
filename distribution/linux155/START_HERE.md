@@ -11,8 +11,14 @@ Wayfern155.0.8059.79. Оба движка включены. Наши native poli
 2. Нужны Python3.11+, графическая сессия X11/Wayland и системные зависимости
    GTK3/WebKitGTK4.1/NSS/GBM/ALSA/ayatana-appindicator/libxdo. Менеджер собран
    на Ubuntu24.04; старый glibc несовместим — одного Python недостаточно.
-3. Запускайте от обычного пользователя, **не root**. Sandbox по умолчанию не
-   отключается. `--no-sandbox` из WSL-диагностик в этот launcher не добавлен.
+3. Запускайте от обычного пользователя, **не root** и не `nobody`.
+   **Ограничение безопасности:** launcher не добавляет sandbox-флаги, но
+   унаследованный Linux backend Donut запускает Wayfern с `--no-sandbox` и
+   `--disable-setuid-sandbox`. Поэтому включённый Chromium sandbox для Wayfern
+   НЕ заявлен. Для недоверенного веб-контента используйте отдельную VM/контейнер
+   и непривилегированного пользователя; это не заменяет полноценный sandbox.
+   Проверка без этих флагов в WSL завершилась падением renderer и не считается
+   PASS. CBrowser и Wayfern проверены только в конфигурации из отчёта.
 4. `./Donut-Agent-Kit preflight --json`
 5. `./Donut-Agent-Kit verify --json`
 6. Прочитайте применимые лицензии и условия Wayfern (https://wayfern.com/tos).
@@ -50,6 +56,9 @@ MCP-клиент подключается к loopback `/mcp` с Bearer-токе�
 
 - Donut — upstream Tauri/Rust + Next.js; лицензия в `licenses/LICENSE`,
   соответствующие исходники в `source/donut036-matching-source.zip`.
+  Native-модификации движков воспроизводятся комплектом
+  `source/native-linux-reproducer.zip` (проверяемый Python-код, манифесты и
+  fingerprint-таблицы; credentials не нужны). Это не исходники Chromium C++.
 - CBrowser/Wayfern — нативные Chromium-движки с сохранёнными оригинальными
   ресурсами/уведомлениями внутри своих каталогов. Лицензии третьих сторон,
   включая шрифты, не заменяются нашей product policy.

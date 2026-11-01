@@ -11,12 +11,16 @@ on:
         description: Build only Linux x64
         type: boolean
         default: false
+      macos_arm_only:
+        description: Build only macOS ARM64 on macos-26
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: port036-native-${{ github.ref }}-${{ inputs.windows_only && 'windows' || inputs.linux_only && 'linux' || 'all' }}
+  group: port036-native-${{ github.ref }}-${{ inputs.windows_only && 'windows' || inputs.linux_only && 'linux' || inputs.macos_arm_only && 'macos-arm' || 'all' }}
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.windows_only && '[{"runner":"windows-2025","arch":"windows-x64"}]' || inputs.linux_only && '[{"runner":"ubuntu-24.04","arch":"linux-x64"}]' || '[{"runner":"windows-2025","arch":"windows-x64"},{"runner":"ubuntu-24.04","arch":"linux-x64"},{"runner":"macos-15","arch":"macos-arm64"},{"runner":"macos-15-intel","arch":"macos-x64"}]') }}
+        include: ${{ fromJSON(inputs.windows_only && '[{"runner":"windows-2025","arch":"windows-x64"}]' || inputs.linux_only && '[{"runner":"ubuntu-24.04","arch":"linux-x64"}]' || inputs.macos_arm_only && '[{"runner":"macos-26","arch":"macos-arm64"}]' || '[{"runner":"windows-2025","arch":"windows-x64"},{"runner":"ubuntu-24.04","arch":"linux-x64"},{"runner":"macos-15","arch":"macos-arm64"},{"runner":"macos-15-intel","arch":"macos-x64"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
