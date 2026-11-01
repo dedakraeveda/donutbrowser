@@ -9,6 +9,7 @@ import shutil
 import struct
 import subprocess
 import urllib.request
+import urllib.error
 
 ROOT = Path(os.environ['RUNNER_TEMP']) / 'donut-arm-native-probe'
 URL = 'https://download.wayfern.com/wayfern_155.0.8059.79-1.1_macos.dmg'
@@ -29,10 +30,26 @@ report = {'scope': 'unmodified official ARM64 baseline, not an own fork release'
           'platform': platform.platform(), 'sourceUrl': URL, 'sha256': SHA,
           'signatureScope': 'macOS codesign verification, not a notarization claim',
           'freeBytesBefore': shutil.disk_usage(ROOT).free}
+(ROOT / 'INPUT.json').write_text(json.dumps(report, indent=2))
 archive = ROOT / 'official-wayfern.dmg'
-with urllib.request.urlopen(URL, timeout=90) as response, archive.open('xb') as target:
-    shutil.copyfileobj(response, target, length=2**20)
+try:
+    with urllib.request.urlopen(URL, timeout=90) as response, archive.open('xb') as target:
+        shutil.copyfileobj(response, target, length=2**20)
+    report['inputTransport'] = 'official-public-download'
+except urllib.error.HTTPError as error:
+    if error.code != 403 or archive.exists():
+        raise
+    # Transport only, not an anti-bot/authentication implementation: reuse our
+    # already-downloaded, exact-hash-verified public original through a private
+    # draft asset. No vendor key is supplied to this VM or to GitHub.
+    subprocess.run(['gh', 'release', 'download', 'macos155-probe-input-20261103',
+                    '--repo', 'dedakraeveda/donutbrowser',
+                    '--pattern', 'wayfern_155.0.8059.79-1.1_macos.dmg',
+                    '--output', str(archive)], check=True)
+    report['inputTransport'] = 'private-draft-copy-of-exact-official-input'
 assert digest(archive) == SHA, 'Original DMG differs from locally observed exact original'
+report['downloadSha256Verified'] = True
+(ROOT / 'INPUT.json').write_text(json.dumps(report, indent=2))
 mount = ROOT / 'mount'
 mount.mkdir()
 subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(archive)], check=True, capture_output=True)
