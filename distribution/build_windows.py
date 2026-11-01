@@ -22,6 +22,8 @@ def digest(path):
 def build(args):
     if sys.platform != 'win32':
         raise RuntimeError('Native Windows/MSVC host required')
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     work, output = args.work.resolve(), args.output.resolve()
     if work.exists() or output.exists():
         raise FileExistsError('Work and output must be new directories')
@@ -63,6 +65,8 @@ def build(args):
         if shutil.disk_usage(system).free < 20 * 2**30:
             raise RuntimeError('System disk budget reached; stop before next stage')
 
+    run(['rustc', '--version'])
+    run(['cargo', '--version'])
     run(['pnpm.cmd', 'install', '--frozen-lockfile', '--ignore-scripts', '--store-dir', work / 'pnpm-store'])
     run(['node', 'node_modules/next/dist/bin/next', 'build', '--webpack'])
     run(['node', 'src-tauri/download-xray.mjs', '--target', 'x86_64-pc-windows-msvc'])
