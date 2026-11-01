@@ -1,0 +1,136 @@
+//! Recognize our exact native engine, never grant capabilities to stock Wayfern.
+//!
+//! The marker opts into verification; it is not authority by itself. Both native
+//! payload hashes must match the reviewed build. No vendor plan is synthesized.
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::Path;
+
+const EXE_SHA256: &str = "1b49fdb3b79de9427b247e0c6bb41a8668e5f7b75ba0da39e6d5518cb2cb25e3";
+const DLL_SHA256: &str = "54c30c2a9a73fbc48bb379369c48c1f1f04dc53f3e5d4eada5d57cae40e09185";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Marker {
+  schema_version: u32,
+  policy_id: String,
+  platform: String,
+  technical_version: String,
+  exe_sha256: String,
+  dll_sha256: String,
+  source_rebuilt: bool,
+  license_mode: String,
+  vendor_credentials_included: bool,
+}
+
+fn file_hash(path: &Path) -> Result<String, String> {
+  let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+  let mut digest = Sha256::new();
+  let mut buffer = [0u8; 64 * 1024];
+  loop {
+    let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+    if count == 0 {
+      break;
+    }
+    digest.update(&buffer[..count]);
+  }
+  Ok(
+    digest
+      .finalize()
+      .iter()
+      .map(|byte| format!("{byte:02x}"))
+      .collect(),
+  )
+}
+
+/// Absence means stock behavior. An invalid opt-in fails closed, not fallback.
+/// Verify fresh at every operation/spawn: don't trust a mtime-only hash cache.
+pub fn verified(executable: &Path) -> Result<bool, String> {
+  let Some(root) = executable.parent() else {
+    return Ok(false);
+  };
+  let marker_path = root.join("WAYFERN-FORK.json");
+  if !marker_path.exists() {
+    return Ok(false);
+  }
+  let check = || -> Result<bool, String> {
+    let metadata = std::fs::symlink_metadata(&marker_path).map_err(|e| e.to_string())?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 4096 {
+      return Err("Invalid local engine marker".into());
+    }
+    let marker: Marker =
+      serde_json::from_slice(&std::fs::read(&marker_path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    if !cfg!(target_os = "windows")
+      || marker.schema_version != 1
+      || marker.policy_id != "authorized-local-v1"
+      || marker.platform != "windows-x64"
+      || marker.technical_version != "155.0.8059.79"
+      || marker.exe_sha256 != EXE_SHA256
+      || marker.dll_sha256 != DLL_SHA256
+      || marker.license_mode != "offline-local"
+      || marker.source_rebuilt
+      || marker.vendor_credentials_included
+    {
+      return Err("Unsupported local engine policy".into());
+    }
+    for file in [executable.to_path_buf(), root.join("chrome.dll")] {
+      let metadata = std::fs::symlink_metadata(&file).map_err(|e| e.to_string())?;
+      if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("Linked local engine payload refused".into());
+      }
+    }
+    if file_hash(executable)? != EXE_SHA256 || file_hash(&root.join("chrome.dll"))? != DLL_SHA256 {
+      return Err("Local engine payload checksum mismatch".into());
+    }
+    Ok(true)
+  };
+  check().map_err(|detail| crate::backend_error_with_detail("INTERNAL_ERROR", detail))
+}
+
+pub fn for_profile(profile: &crate::profile::BrowserProfile) -> Result<bool, String> {
+  let executable = crate::browser_runner::BrowserRunner::instance()
+    .get_browser_executable_path(profile)
+    .map_err(|e| crate::backend_error_with_detail("INTERNAL_ERROR", e))?;
+  verified(&executable)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn stock_engine_without_marker_keeps_vendor_policy() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("chrome.exe"), b"fixture only").unwrap();
+    assert!(!verified(&root.path().join("chrome.exe")).unwrap());
+  }
+
+  #[test]
+  fn arbitrary_marker_cannot_grant_local_capabilities() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("WAYFERN-FORK.json"), b"{}").unwrap();
+    assert!(verified(&root.path().join("chrome.exe")).is_err());
+  }
+
+  #[test]
+  fn marker_hash_claims_are_not_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = serde_json::json!({"schemaVersion":1,"policyId":"authorized-local-v1",
+      "platform":"windows-x64","technicalVersion":"155.0.8059.79","exeSha256":EXE_SHA256,
+      "dllSha256":DLL_SHA256,"sourceRebuilt":false,"licenseMode":"offline-local",
+      "vendorCredentialsIncluded":false});
+    std::fs::write(root.path().join("WAYFERN-FORK.json"), marker.to_string()).unwrap();
+    std::fs::write(root.path().join("chrome.exe"), b"not the reviewed engine").unwrap();
+    std::fs::write(root.path().join("chrome.dll"), b"not the reviewed payload").unwrap();
+    assert!(verified(&root.path().join("chrome.exe")).is_err());
+  }
+
+  #[test]
+  fn oversized_marker_refused() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("WAYFERN-FORK.json"), vec![b' '; 4097]).unwrap();
+    assert!(verified(&root.path().join("chrome.exe")).is_err());
+  }
+}

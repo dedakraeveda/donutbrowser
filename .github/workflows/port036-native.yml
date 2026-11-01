@@ -1,0 +1,73 @@
+name: Donut036 reviewed source native candidates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port036-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: windows-x64
+          - runner: ubuntu-24.04
+            arch: linux-x64
+          - runner: macos-15
+            arch: macos-arm64
+          - runner: macos-15-intel
+            arch: macos-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      BUILD_ARCH: ${{ matrix.arch }}
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout reviewed source without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Setup pnpm from candidate manifest, not old manager root
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          package_json_file: distribution/port036-wayfern/overlay/package.json
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - name: Select native Windows compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - name: Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev pkg-config unzip xdg-utils libssl-dev
+      - name: Update native Rust toolchain
+        run: rustup update stable --no-self-update
+      - name: Fetch and authenticate pinned public upstream source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/port036-native"
+          curl --fail --location --retry 2 'https://github.com/donutbrowser/donutbrowser/archive/refs/tags/v0.36.0.zip' -o "$RUNNER_TEMP/port036-native/upstream.zip"
+          python distribution/port036-wayfern/prepare_ci.py --archive "$RUNNER_TEMP/port036-native/upstream.zip" --destination "$RUNNER_TEMP/port036-native/source"
+      - name: Check and build native candidate, never install
+        run: python distribution/port036-wayfern/ci_build.py
+      - name: Upload manager binaries and hashes only, no public Release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Donut036-${{ matrix.arch }}-manager-candidate
+          path: ${{ runner.temp }}/port036-native/artifacts/*
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,15 @@
+--- a/src-tauri/src/traffic_stats.rs
++++ b/src-tauri/src/traffic_stats.rs
+@@ -682,7 +682,11 @@
+ ) -> Result<(), Box<dyn std::error::Error>> {
+   let temp_path = dir.join(format!("{key}.json.tmp"));
+   fs::write(&temp_path, serde_json::to_vec(stats)?)?;
+-  fs::rename(&temp_path, dir.join(format!("{key}.json")))?;
++  let installed = dir.join(format!("{key}.json"));
++  fs::rename(&temp_path, &installed)?;
++  // Same-size writes can share an NTFS modification timestamp. A successful
++  // local write must invalidate the read cache even when FileSig is unchanged.
++  forget_cached(Some(&installed));
+   Ok(())
+ }
+ 

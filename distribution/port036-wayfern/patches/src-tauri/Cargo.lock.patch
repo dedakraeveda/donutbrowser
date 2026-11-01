@@ -1,0 +1,27 @@
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -1783,7 +1783,7 @@
+ 
+ [[package]]
+ name = "donutbrowser"
+-version = "0.36.0"
++version = "0.36.0+authorized.9"
+ dependencies = [
+  "aes",
+  "aes-gcm",
+@@ -1800,6 +1800,7 @@
+  "chrono",
+  "chrono-tz",
+  "clap",
++ "constant_time_eq",
+  "core-foundation 0.10.1",
+  "crossbeam-channel",
+  "directories",
+@@ -1815,6 +1816,7 @@
+  "hyper-util",
+  "image",
+  "jsonc-parser",
++ "lazy_static",
+  "libc",
+  "log",
+  "lzma-rust2",

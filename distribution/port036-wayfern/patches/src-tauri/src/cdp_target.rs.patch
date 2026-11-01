@@ -1,0 +1,85 @@
+--- a/src-tauri/src/cdp_target.rs
++++ b/src-tauri/src/cdp_target.rs
+@@ -175,6 +175,26 @@
+   }
+ }
+ 
++tokio::task_local! {
++  static EXACT_PAGE: Option<(String, String)>;
++}
++
++/// Per-call target, never a global selection shared by parallel agents.
++pub(crate) async fn with_exact_page<F: std::future::Future>(
++  profile: Option<&str>,
++  page: Option<&str>,
++  work: F,
++) -> F::Output {
++  EXACT_PAGE
++    .scope(
++      profile
++        .zip(page)
++        .map(|(p, t)| (p.to_string(), t.to_string())),
++      work,
++    )
++    .await
++}
++
+ /// Find the browser for `profile`, wherever it is running.
+ ///
+ /// Local wins when both look possible: the profile lock makes a genuine overlap
+@@ -188,7 +208,42 @@
+ /// split covers a stale `process_id` left by a crash — nothing answers on the
+ /// recorded port, so the remote session is found instead of a dead one.
+ pub async fn resolve(profile: &BrowserProfile) -> Result<CdpTarget, ResolveError> {
+-  if profile.browser != "wayfern" {
++  let page = EXACT_PAGE
++    .try_with(|selected| selected.clone())
++    .ok()
++    .flatten();
++  if let Some((owner, id)) = page {
++    if owner != profile.id.to_string() {
++      return Err(ResolveError::Unsupported(
++        "Exact page belongs to another requested profile".into(),
++      ));
++    }
++    let port = local_cdp_port(profile, Patience::Immediate)
++      .await
++      .ok_or_else(|| {
++        ResolveError::NotRunning("Exact-page targeting requires a running local profile".into())
++      })?;
++    let targets: Vec<Value> = reqwest::Client::new()
++      .get(format!("http://127.0.0.1:{port}/json/list"))
++      .timeout(Duration::from_secs(5))
++      .send()
++      .await
++      .map_err(|e| ResolveError::Endpoint(e.to_string()))?
++      .json()
++      .await
++      .map_err(|e| ResolveError::Endpoint(e.to_string()))?;
++    let target = targets
++      .iter()
++      .find(|t| t["id"].as_str() == Some(id.as_str()) && t["type"].as_str() == Some("page"))
++      .and_then(|t| t["webSocketDebuggerUrl"].as_str())
++      .ok_or_else(|| {
++        ResolveError::NotRunning("Requested page no longer exists; refresh list_tabs".into())
++      })?;
++    return Ok(CdpTarget::Local {
++      ws_url: target.to_string(),
++    });
++  }
++  if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+     return Err(ResolveError::Unsupported(format!(
+       "Profile '{}' runs {}, which cannot be driven over CDP",
+       profile.name, profile.browser
+@@ -240,6 +295,11 @@
+ 
+ /// The debugging port a locally launched browser registered for this profile.
+ async fn local_cdp_port(profile: &BrowserProfile, patience: Patience) -> Option<u16> {
++  if profile.browser == "cloak" {
++    let roots = crate::profile::manager::ProfileManager::instance().get_profiles_dir();
++    let path = crate::ephemeral_dirs::get_effective_profile_path(profile, &roots);
++    return crate::cbrowser_manager::get_cdp_port(&path);
++  }
+   // Port info is written once the process is up, so a tool called straight
+   // after a launch has to wait for it.
+   for attempt in 0..patience.attempts(10) {

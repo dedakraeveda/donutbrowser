@@ -1,0 +1,33 @@
+--- a/src-tauri/src/platform_browser.rs
++++ b/src-tauri/src/platform_browser.rs
+@@ -486,27 +486,11 @@
+   pub async fn kill_browser_process_impl(
+     pid: u32,
+   ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+-    // First try using sysinfo (cross-platform approach), refreshing only this
+-    // process.
+-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
+-    let sysinfo_pid = Pid::from_u32(pid);
+-    let mut system = crate::proxy_storage::process_table(sysinfo::RefreshKind::nothing());
+-    system.refresh_processes_specifics(
+-      ProcessesToUpdate::Some(&[sysinfo_pid]),
+-      true,
+-      ProcessRefreshKind::nothing(),
+-    );
+-    if let Some(process) = system.process(sysinfo_pid) {
+-      if process.kill() {
+-        log::debug!("Browser process killed pid={pid}");
+-        return Ok(());
+-      }
+-    }
+-
+-    // Fallback: taskkill, awaited without blocking the async runtime.
++    // Stop the owned Chromium tree BEFORE its parent is lost; root-only
++    // termination can orphan renderer, GPU and network-service processes.
+     const CREATE_NO_WINDOW: u32 = 0x08000000;
+     let output = tokio::process::Command::new("taskkill")
+-      .args(["/F", "/PID", &pid.to_string()])
++      .args(["/F", "/T", "/PID", &pid.to_string()])
+       .creation_flags(CREATE_NO_WINDOW)
+       .output()
+       .await;

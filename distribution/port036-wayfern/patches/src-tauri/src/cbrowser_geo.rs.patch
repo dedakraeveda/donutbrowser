@@ -1,0 +1,166 @@
+--- a/src-tauri/src/cbrowser_geo.rs
++++ b/src-tauri/src/cbrowser_geo.rs
+@@ -0,0 +1,163 @@
++//! Per-target geolocation installed before newly attached targets resume.
++//! Never grants website permissions. Failure closes the owned browser.
++use futures_util::{SinkExt, StreamExt};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++use tokio_tungstenite::tungstenite::Message;
++
++type OwnedBrowsers = Vec<(u32, std::path::PathBuf)>;
++static OWNED: std::sync::Mutex<OwnedBrowsers> = std::sync::Mutex::new(Vec::new());
++
++pub async fn shutdown() {
++  let browsers = std::mem::take(&mut *OWNED.lock().unwrap_or_else(|e| e.into_inner()));
++  for (pid, path) in browsers {
++    if super::discover_pid(&path.to_string_lossy()) == Some(pid) {
++      let _ = super::stop_pid(pid, &path).await;
++    }
++  }
++}
++
++pub async fn supervise(
++  port: u16,
++  latitude: f64,
++  longitude: f64,
++  profile_path: std::path::PathBuf,
++) -> Result<(), String> {
++  if !latitude.is_finite()
++    || !longitude.is_finite()
++    || latitude.abs() > 90.0
++    || longitude.abs() > 180.0
++  {
++    return Err("Invalid geolocation".into());
++  }
++  let client = reqwest::Client::builder()
++    .no_proxy()
++    .timeout(std::time::Duration::from_secs(5))
++    .build()
++    .map_err(|_| "CDP client unavailable")?;
++  let version: Value = client
++    .get(format!("http://127.0.0.1:{port}/json/version"))
++    .send()
++    .await
++    .map_err(|_| "CDP unavailable")?
++    .json()
++    .await
++    .map_err(|_| "CDP response invalid")?;
++  let endpoint = version["webSocketDebuggerUrl"]
++    .as_str()
++    .ok_or("CDP endpoint absent")?;
++  let parsed = url::Url::parse(endpoint).map_err(|_| "CDP endpoint invalid")?;
++  if parsed.scheme() != "ws"
++    || parsed.host_str() != Some("127.0.0.1")
++    || parsed.port() != Some(port)
++  {
++    return Err("CDP endpoint is not owned loopback".into());
++  }
++  let (mut ws, _) = tokio::time::timeout(
++    std::time::Duration::from_secs(5),
++    tokio_tungstenite::connect_async(endpoint),
++  )
++  .await
++  .map_err(|_| "CDP connect timed out")?
++  .map_err(|_| "CDP connect failed")?;
++  ws.send(Message::Text(json!({"id":1,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"page"},{"type":"iframe"}]}}).to_string().into())).await.map_err(|_| "CDP attach failed")?;
++  let owned_pid =
++    super::discover_pid(&profile_path.to_string_lossy()).ok_or("Owned browser process absent")?;
++  OWNED
++    .lock()
++    .unwrap_or_else(|e| e.into_inner())
++    .push((owned_pid, profile_path.clone()));
++  let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
++  tokio::spawn(async move {
++    let mut ready = Some(ready_tx);
++    let mut attached = false;
++    let mut id = 1u64;
++    // Command acknowledgement -> session and next stage.
++    let mut pending: HashMap<u64, (String, u8)> = HashMap::new();
++    let outcome: Result<(), ()> = async {
++      loop {
++        let message = tokio::time::timeout(std::time::Duration::from_secs(10), ws.next()).await;
++        let message = match message {
++          Ok(Some(Ok(message))) => message,
++          Ok(None) => return Err(()),
++          Ok(Some(Err(_))) => return Err(()),
++          Err(_) if ready.is_none() => {
++            pending.clear();
++            let _ = ws.send(Message::Ping(Vec::new().into())).await;
++            continue;
++          }
++          Err(_) => return Err(()),
++        };
++        if let Message::Ping(data) = message { ws.send(Message::Pong(data)).await.map_err(|_| ())?; continue; }
++        let Message::Text(text) = message else { continue; };
++        let value: Value = serde_json::from_str(&text).map_err(|_| ())?;
++        if value.get("error").is_some() {
++          // A target may close while its setup command is in flight. Errors
++          // for commands already cancelled by detach or unsupported sub-targets are harmless.
++          if value["id"].as_u64().is_some_and(|id| id == 1) { return Err(()); }
++          if let Some(resp_id) = value["id"].as_u64() {
++            pending.remove(&resp_id);
++          }
++          if attached && pending.is_empty() {
++            if let Some(tx) = ready.take() { let _ = tx.send(()); }
++          }
++          continue;
++        }
++        if value["method"] == "Target.detachedFromTarget" {
++          if let Some(session) = value["params"]["sessionId"].as_str() {
++            pending.retain(|_, (owner, _)| owner != session);
++          }
++          if attached && pending.is_empty() {
++            if let Some(tx) = ready.take() { let _ = tx.send(()); }
++          }
++        }
++        if value["method"] == "Target.attachedToTarget" {
++          let session = value["params"]["sessionId"].as_str().ok_or(())?.to_string();
++          id += 1;
++          pending.insert(id, (session.clone(), 0));
++          ws.send(Message::Text(json!({"id":id,"sessionId":session,"method":"Emulation.setGeolocationOverride","params":{"latitude":latitude,"longitude":longitude,"accuracy":25000}}).to_string().into())).await.map_err(|_| ())?;
++        } else if let Some(response_id) = value["id"].as_u64() {
++          if response_id == 1 { attached = true; }
++          if let Some((session, stage)) = pending.remove(&response_id) {
++            if stage < 2 {
++              id += 1;
++              let (method, params) = if stage == 0 {
++                ("Target.setAutoAttach", json!({"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"iframe"}]}))
++              } else { ("Runtime.runIfWaitingForDebugger", json!({})) };
++              pending.insert(id, (session.clone(), stage + 1));
++              ws.send(Message::Text(json!({"id":id,"sessionId":session,"method":method,"params":params}).to_string().into())).await.map_err(|_| ())?;
++            }
++          }
++          if attached && pending.is_empty() {
++            if let Some(tx) = ready.take() { let _ = tx.send(()); }
++          }
++        }
++      }
++    }.await;
++    if outcome.is_err() {
++      log::error!("CBrowser geolocation supervision failed; closing owned browser");
++      let _ = tokio::time::timeout(
++        std::time::Duration::from_secs(2),
++        ws.send(Message::Text(
++          json!({"id":id+1,"method":"Browser.close"})
++            .to_string()
++            .into(),
++        )),
++      )
++      .await;
++      // The socket itself may be gone. Discover the owned profile process,
++      // rather than terminating an unrelated process through a stale PID.
++      if super::discover_pid(&profile_path.to_string_lossy()) == Some(owned_pid) {
++        let _ = super::stop_pid(owned_pid, &profile_path).await;
++      }
++    }
++    OWNED
++      .lock()
++      .unwrap_or_else(|e| e.into_inner())
++      .retain(|(pid, path)| *pid != owned_pid || path != &profile_path);
++  });
++  tokio::time::timeout(std::time::Duration::from_secs(15), ready_rx)
++    .await
++    .map_err(|_| "Geo attachment timed out")?
++    .map_err(|_| "Geo attachment failed".to_string())
++}

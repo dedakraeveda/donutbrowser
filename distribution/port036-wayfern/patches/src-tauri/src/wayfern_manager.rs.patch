@@ -1,0 +1,178 @@
+--- a/src-tauri/src/wayfern_manager.rs
++++ b/src-tauri/src/wayfern_manager.rs
+@@ -1115,6 +1115,7 @@
+       .get_browser_executable_path(profile)
+       .map_err(|e| format!("Failed to get Wayfern executable path: {e}"))?;
+ 
++    let local_engine = crate::wayfern_local_policy::verified(&executable_path)?;
+     let port = WayfernManager::find_free_port().await?;
+ 
+     let user_data_dir = headless_profiles_root().join(uuid::Uuid::new_v4().to_string());
+@@ -1149,7 +1150,11 @@
+       .stdin(Stdio::null())
+       .stdout(Stdio::null())
+       .stderr(Stdio::piped());
+-    if let Some(token) = token {
++    if local_engine {
++      cmd
++        .env_remove("WAYFERN_TOKEN")
++        .env_remove("DONUT_WAYFERN_TOKEN");
++    } else if let Some(token) = token {
+       cmd.env("WAYFERN_TOKEN", token);
+     }
+ 
+@@ -2701,7 +2706,12 @@
+     profile: &BrowserProfile,
+     config: &WayfernConfig,
+   ) -> Result<GeneratedFingerprint, Box<dyn std::error::Error + Send + Sync>> {
+-    let wayfern_token = crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await;
++    let local_engine = crate::wayfern_local_policy::for_profile(profile)?;
++    let wayfern_token = if local_engine {
++      None
++    } else {
++      crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await
++    };
+     let session = HeadlessWayfern::start(
+       self,
+       profile,
+@@ -2738,7 +2748,7 @@
+     let refused_for_plan = generate_result.as_ref().is_err_and(|e| {
+       wayfern_failure(&e.to_string(), "", Some(os)).contains("\"WAYFERN_CROSS_OS_REQUIRES_PLAN\"")
+     });
+-    if refused_for_plan {
++    if refused_for_plan && !local_engine {
+       if let Some(fresh) = crate::cloud_auth::CLOUD_AUTH
+         .wayfern_token_after_refusal(wayfern_token.as_deref())
+         .await
+@@ -2917,6 +2927,7 @@
+         claimed_os.as_deref(),
+       ))
+     };
++    let local_engine = crate::wayfern_local_policy::for_profile(profile)?;
+     let auth = &crate::cloud_auth::CLOUD_AUTH;
+     // A view read once is shown again without starting a browser, while the
+     // plan includes custom fingerprints.
+@@ -2925,7 +2936,7 @@
+       profile.version,
+       serde_json::Value::Object(params.clone())
+     );
+-    let entitled = auth.can_use_cross_os_fingerprints().await;
++    let entitled = local_engine || auth.can_use_cross_os_fingerprints().await;
+     if let Some(view) = FINGERPRINT_VIEWS
+       .lock()
+       .ok()
+@@ -2934,9 +2945,13 @@
+     {
+       return Ok(Some(view));
+     }
+-    let mut token = auth.get_wayfern_token().await;
++    let mut token = if local_engine {
++      None
++    } else {
++      auth.get_wayfern_token().await
++    };
+     // A paid account whose Wayfern token has not arrived yet asks for one.
+-    if token.is_none() && auth.is_entitled_to_wayfern_token().await {
++    if !local_engine && token.is_none() && auth.is_entitled_to_wayfern_token().await {
+       if let Err(e) = auth.request_wayfern_token().await {
+         log::warn!(
+           "Wayfern token request for a fingerprint view failed profile={} err=\"{e}\"",
+@@ -3020,6 +3035,7 @@
+       .get_browser_executable_path(profile)
+       .map_err(|e| format!("Failed to get Wayfern executable path: {e}"))?;
+ 
++    let local_engine = crate::wayfern_local_policy::verified(&executable_path)?;
+     let port = match remote_debugging_port {
+       Some(p) => p,
+       None => Self::find_free_port().await?,
+@@ -3193,11 +3209,16 @@
+     let profile_color = profile_color.trim().trim_start_matches('#');
+     args.push(format!("--wayfern-profile-color={profile_color}"));
+ 
+-    let mut wayfern_token = crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await;
++    let mut wayfern_token = if local_engine {
++      None
++    } else {
++      crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await
++    };
+     // Waiting is only meaningful for a plan a token can actually be minted for.
+     // On "any active plan" this stalled every Solo launch by the full three
+     // seconds waiting for a token the backend will never issue to them.
+-    if wayfern_token.is_none()
++    if !local_engine
++      && wayfern_token.is_none()
+       && crate::cloud_auth::CLOUD_AUTH
+         .is_entitled_to_wayfern_token()
+         .await
+@@ -3238,7 +3259,7 @@
+     // certain. An unrecognised `os`, a platform that maps to nothing, and a
+     // profile with no stored device all fall through and let the browser
+     // decide, so a mistake here can only ever cost the clearer error message.
+-    if wayfern_token.is_none() {
++    if !local_engine && wayfern_token.is_none() {
+       let stored_device = config
+         .fingerprint
+         .as_deref()
+@@ -3264,7 +3285,8 @@
+       }
+     }
+ 
+-    if wayfern_token.is_none()
++    if !local_engine
++      && wayfern_token.is_none()
+       && !Self::stored_object(config.identity_overrides.as_deref()).is_empty()
+       && crate::cloud_auth::CLOUD_AUTH
+         .can_use_cross_os_fingerprints()
+@@ -3346,7 +3368,12 @@
+           account_known,
+         ));
+         // The plan of the signed-in account, as this app knows it.
+-        if let Some(auth) = crate::cloud_auth::CLOUD_AUTH.get_user().await {
++        let cloud_user = if local_engine {
++          None
++        } else {
++          crate::cloud_auth::CLOUD_AUTH.get_user().await
++        };
++        if let Some(auth) = cloud_user {
+           let plan = if auth.user.entitlements().active {
+             auth.user.effective_plan().to_string()
+           } else {
+@@ -3447,7 +3474,11 @@
+       .stdin(Stdio::null())
+       .stdout(Stdio::null())
+       .stderr(Stdio::piped());
+-    if let Some(ref token) = wayfern_token {
++    if local_engine {
++      command
++        .env_remove("WAYFERN_TOKEN")
++        .env_remove("DONUT_WAYFERN_TOKEN");
++    } else if let Some(ref token) = wayfern_token {
+       command.env("WAYFERN_TOKEN", token);
+     }
+ 
+@@ -3634,7 +3665,11 @@
+           Self::stored_object(config.location.as_deref()),
+         )
+       };
+-      let wayfern_token = crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await;
++      let wayfern_token = if local_engine {
++        None
++      } else {
++        crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await
++      };
+ 
+       let mut params = serde_json::Map::new();
+       params.insert("identityId".to_string(), json!(identity_id));
+@@ -3718,7 +3753,11 @@
+       let fingerprint_for_cdp = Self::launch_fingerprint_payload(fingerprint_json)?;
+ 
+       // Include wayfern token if available (enables cross-OS fingerprinting for paid users)
+-      let wayfern_token = crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await;
++      let wayfern_token = if local_engine {
++        None
++      } else {
++        crate::cloud_auth::CLOUD_AUTH.get_wayfern_token().await
++      };
+ 
+       // The device as donut holds it, for the diagnostic below.
+       let stored = fingerprint_for_cdp.as_object().cloned().unwrap_or_default();

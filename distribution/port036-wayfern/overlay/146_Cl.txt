@@ -1,0 +1,7 @@
+146.0.7680.177.5
+
+CBrowser fork release: 1.33
+The first line is the immutable technical Chromium/cache compatibility version.
+Public project/distribution version: CBrowser 1.33.
+This is a release-label change, not a claim to have rebuilt or upgraded Chromium.
+Original executable version resources, protocol versions, third-party notices and historical immutable releases retain their technical values.

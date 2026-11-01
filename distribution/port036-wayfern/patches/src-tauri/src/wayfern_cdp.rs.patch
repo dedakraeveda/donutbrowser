@@ -1,0 +1,18 @@
+--- a/src-tauri/src/wayfern_cdp.rs
++++ b/src-tauri/src/wayfern_cdp.rs
+@@ -67,6 +67,15 @@
+ }
+ 
+ impl Engine {
++  /// Browser identity, not the coincident Chromium major, selects vendor domains.
++  pub fn for_browser(browser: &str, version: &str) -> Self {
++    if browser == "wayfern" {
++      Self::for_version(version)
++    } else {
++      Self::Fallback
++    }
++  }
++
+   /// The engine a profile on `version` gets, read at the point of use.
+   pub fn for_version(version: &str) -> Self {
+     if crate::wayfern_manager::supports_wayfern_152(version) {

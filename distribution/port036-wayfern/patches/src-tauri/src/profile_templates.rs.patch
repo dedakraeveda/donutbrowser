@@ -1,0 +1,99 @@
+--- a/src-tauri/src/profile_templates.rs
++++ b/src-tauri/src/profile_templates.rs
+@@ -16,6 +16,9 @@
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
+ pub struct TemplateSettings {
++  /// Engine ID; omitted keeps upstream Wayfern templates compatible.
++  #[serde(default)]
++  pub browser: Option<String>,
+   /// What the profiles made from the template are named after.
+   #[serde(default)]
+   pub name_prefix: Option<String>,
+@@ -126,6 +129,10 @@
+ impl TemplateSettings {
+   /// Every value checked and in its stored form.
+   pub async fn checked(self) -> Result<Self, String> {
++    if let Some(browser) = self.browser.as_deref() {
++      crate::browser::BrowserType::from_str(browser)
++        .map_err(|error| crate::wrap_backend_error(error, "Invalid template browser"))?;
++    }
+     let name_prefix = trimmed(self.name_prefix);
+     if name_prefix
+       .as_ref()
+@@ -167,6 +174,7 @@
+     }
+ 
+     Ok(Self {
++      browser: self.browser,
+       name_prefix,
+       proxy_id,
+       vpn_id,
+@@ -207,6 +215,7 @@
+   /// belong to that one profile.
+   fn from_profile(profile: &BrowserProfile) -> Self {
+     Self {
++      browser: Some(profile.browser.clone()),
+       name_prefix: None,
+       proxy_id: profile.proxy_id.clone(),
+       vpn_id: profile.vpn_id.clone(),
+@@ -440,18 +449,23 @@
+ 
+   let settings = settings.checked().await?;
+   let after = settings.after_creation().validated()?;
+-  let version = latest_wayfern_version().ok_or_else(|| {
+-    serde_json::json!({ "code": "BROWSER_NOT_DOWNLOADED", "params": { "browser": "Wayfern" } })
+-      .to_string()
+-  })?;
++  let browser = settings.browser.as_deref().unwrap_or("wayfern");
++  let version = if browser == "cloak" {
++    if !crate::cbrowser_manager::is_available() {
++      return Err(code("CLOAK_BINARY_NOT_CONFIGURED"));
++    }
++    crate::cbrowser_manager::EXTERNAL_VERSION.to_string()
++  } else {
++    latest_wayfern_version().ok_or_else(|| {
++      serde_json::json!({ "code": "BROWSER_NOT_DOWNLOADED", "params": { "browser": "Wayfern" } })
++        .to_string()
++    })?
++  };
+   let os = settings
+     .wayfern_config
+     .as_ref()
+     .and_then(|c| c.os.as_deref());
+-  if !crate::cloud_auth::CLOUD_AUTH
+-    .is_fingerprint_os_allowed(os)
+-    .await
+-  {
++  if !crate::entitlements::EntitlementsPolicy::is_fingerprint_os_allowed(os).await {
+     return Err(code("FINGERPRINT_REQUIRES_PRO"));
+   }
+   let routes: Vec<Option<String>> = if settings.proxy_ids.is_empty() {
+@@ -485,7 +499,7 @@
+     // a free allowance is a warning; a batch past it gets generation
+     // blocked upstream.
+     let allowance = crate::profile_generation_limiter::get_profile_creation_allowance().await;
+-    if let Some(retry_after) = allowance.retry_after_secs {
++    if let Some(retry_after) = allowance.retry_after_secs.filter(|_| browser == "wayfern") {
+       error = Some(
+         serde_json::json!({
+           "code": "PROFILE_GENERATION_LIMIT_REACHED",
+@@ -502,12 +516,16 @@
+       .create_profile_with_group(
+         app_handle,
+         name,
+-        "wayfern",
++        browser,
+         &version,
+         "stable",
+         routes[index % routes.len()].clone(),
+         settings.vpn_id.clone(),
+-        Some(settings.wayfern_config.clone().unwrap_or_default()),
++        if browser == "wayfern" {
++          Some(settings.wayfern_config.clone().unwrap_or_default())
++        } else {
++          None
++        },
+         settings.group_id.clone(),
+         settings.ephemeral,
+         settings.dns_blocklist.clone(),

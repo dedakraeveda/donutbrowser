@@ -1,0 +1,21 @@
+--- a/e2e/coverage-map.mjs
++++ b/e2e/coverage-map.mjs
+@@ -272,11 +272,18 @@
+       "check_integration_connection",
+       "list_mcp_agents",
+       "add_mcp_to_agent",
++      "add_local_mcp_to_agent",
+       "remove_mcp_from_agent",
+       "set_mcp_toolsets",
+       "start_mcp_remote_bridge",
+       "stop_mcp_remote_bridge",
+       "get_mcp_remote_status",
++      "get_cloak_engine_status",
++      "set_cloak_binary_path",
++      "start_mcp_server",
++      "stop_mcp_server",
++      "get_mcp_server_status",
++      "get_mcp_config",
+       "get_remote_control_entitlement",
+       "get_mcp_remote_credential",
+       "rotate_mcp_remote_credential",

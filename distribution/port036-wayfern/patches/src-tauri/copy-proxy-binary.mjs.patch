@@ -1,0 +1,66 @@
+--- a/src-tauri/copy-proxy-binary.mjs
++++ b/src-tauri/copy-proxy-binary.mjs
+@@ -1,4 +1,4 @@
+-import { execFileSync, execSync } from "node:child_process";
++import { execFileSync } from "node:child_process";
+ import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+ import { dirname, join } from "node:path";
+ import { fileURLToPath } from "node:url";
+@@ -13,7 +13,10 @@
+ function getTarget() {
+   if (process.env.TARGET) return process.env.TARGET;
+   try {
+-    const output = execSync("rustc -vV", { encoding: "utf-8" });
++    const output = execFileSync("rustc", ["-vV"], {
++      encoding: "utf-8",
++      windowsHide: true,
++    });
+     const match = output.match(/host:\s*(.+)/);
+     if (match) return match[1].trim();
+   } catch {}
+@@ -22,7 +25,10 @@
+ 
+ function getHostTarget() {
+   try {
+-    const output = execSync("rustc -vV", { encoding: "utf-8" });
++    const output = execFileSync("rustc", ["-vV"], {
++      encoding: "utf-8",
++      windowsHide: true,
++    });
+     const match = output.match(/host:\s*(.+)/);
+     if (match) return match[1].trim();
+   } catch {}
+@@ -33,21 +39,13 @@
+ const HOST_TARGET = getHostTarget();
+ const isWindows = TARGET.includes("windows");
+ 
+-// Determine source directory
++// Honor the task-local target directory; never create a duplicate build/cache.
++const targetDir = process.env.CARGO_TARGET_DIR || join(MANIFEST_DIR, "target");
+ let srcDir;
+ if (TARGET === HOST_TARGET || TARGET === "unknown") {
+-  srcDir = join(
+-    MANIFEST_DIR,
+-    "target",
+-    PROFILE === "release" ? "release" : "debug",
+-  );
++  srcDir = join(targetDir, PROFILE === "release" ? "release" : "debug");
+ } else {
+-  srcDir = join(
+-    MANIFEST_DIR,
+-    "target",
+-    TARGET,
+-    PROFILE === "release" ? "release" : "debug",
+-  );
++  srcDir = join(targetDir, TARGET, PROFILE === "release" ? "release" : "debug");
+ }
+ 
+ const destDir = join(MANIFEST_DIR, "binaries");
+@@ -69,6 +67,7 @@
+   execFileSync("cargo", buildArgs, {
+     cwd: MANIFEST_DIR,
+     stdio: "inherit",
++    windowsHide: true,
+   });
+ 
+   if (!existsSync(source)) {

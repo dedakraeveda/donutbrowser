@@ -1,0 +1,18 @@
+--- a/src/components/integrations-dialog.tsx
++++ b/src/components/integrations-dialog.tsx
+@@ -23,6 +23,7 @@
+ import { DeleteConfirmationDialog } from "@/components/delete-confirmation-dialog";
+ import { IntegrationDiagnostics } from "@/components/integration-diagnostics";
+ import { LoadingButton } from "@/components/loading-button";
++import { LocalMcpPanel } from "@/components/local-mcp-panel";
+ import { AgentIcon } from "@/components/mcp-agent-icon";
+ import { AnimatedDisclosureContent } from "@/components/ui/animated-disclosure";
+ import { AnimatedSwitch } from "@/components/ui/animated-switch";
+@@ -1011,6 +1012,7 @@
+             content's right edge. */}
+         <div className="-me-3 min-h-0 flex-1 overflow-y-auto pe-3">
+           <div className={cn(subPage && "mx-auto w-full max-w-4xl")}>
++            <LocalMcpPanel agents={agents} />
+             <AnimatedTabs
+               value={shownTab}
+               onValueChange={(value) => setActiveTab(value as IntegrationsTab)}

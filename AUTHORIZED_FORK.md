@@ -58,6 +58,23 @@ Wayfern Synchronizer end-to-end validation remains outstanding.
 
 The owner explicitly confirmed: «есть, мне разработчик дал право на форк, но мы же давно собирали эти билды. это далеко не cloak уже давно». This task is authorized to package the existing local CBrowser fork together with Donut for transfer as separate EXE/ZIP artifacts. A shared Chromium version number is not evidence that this binary is an unmodified third-party release. Preserve upstream notices and the applicable source/license materials; do not transfer personal profiles, cookies, vault files or tokens. This confirmation is not a request to update the owner's installed application or accounts.
 
+## Wayfern-specific owner authorization (2026-11-02)
+
+After the agent explicitly asked whether the developer grant also covered
+Wayfern engine modification and distribution under our brand, the owner answered:
+«да, конечно на wayfern тоже, давай делать самостоятельно». The owner then
+left the analysis-tool choice to the agent: «rea или сам ... реши сам».
+This records the owner's representation of a separate Wayfern grant, not a claim
+that public Wayfern terms or upstream licences have changed. The authorized
+scope is isolated engine assessment/adaptation and our own licensing integration;
+retain applicable upstream notices and any separately licensed font notices.
+Do not impersonate vendor entitlement services or issue vendor credentials.
+No personal-profile migration or installed-application replacement is implied.
+Original binaries remain immutable; native changes must be exact-hash guarded,
+rollbackable, independently tested and reported as binary modifications rather
+than Chromium source rebuilds. The current assessment is documented in
+`distribution/WAYFERN-FORK-ASSESSMENT.md`.
+
 ## Bundled CBrowser engine
 
 CBrowser profiles use the autonomous runtime under `.local/cbrowser`. It contains

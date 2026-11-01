@@ -1,0 +1,18 @@
+--- a/src-tauri/tests/donut_proxy_integration.rs
++++ b/src-tauri/tests/donut_proxy_integration.rs
+@@ -60,11 +60,10 @@
+   } else {
+     "donut-proxy"
+   };
+-  let proxy_binary = project_root
+-    .join("src-tauri")
+-    .join("target")
+-    .join("debug")
+-    .join(proxy_binary_name);
++  let target_root = std::env::var_os("CARGO_TARGET_DIR")
++    .map(std::path::PathBuf::from)
++    .unwrap_or_else(|| project_root.join("src-tauri").join("target"));
++  let proxy_binary = target_root.join("debug").join(proxy_binary_name);
+ 
+   let binary_is_current = proxy_binary.exists()
+     && std::process::Command::new(&proxy_binary)

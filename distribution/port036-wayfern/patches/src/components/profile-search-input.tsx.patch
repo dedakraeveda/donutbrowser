@@ -1,0 +1,11 @@
+--- a/src/components/profile-search-input.tsx
++++ b/src/components/profile-search-input.tsx
+@@ -913,6 +913,8 @@
+                 onClick={() => {
+                   setQuery("", 0);
+                   setDismissed(false);
++                  setFocused(true);
++                  expand(true);
+                   inputRef.current?.focus();
+                 }}
+                 data-resize-edge="end"

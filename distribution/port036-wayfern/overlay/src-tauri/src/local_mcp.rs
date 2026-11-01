@@ -1,0 +1,273 @@
+//! Authenticated loopback transport for the upstream0.36 MCP dispatcher.
+//! Cloud sessions never inherit local-path permissions; tokens are vault-sealed.
+use crate::mcp_server::{McpOutcome, McpServer};
+use crate::settings_manager::SettingsManager;
+use axum::{
+  body::Bytes,
+  extract::{DefaultBodyLimit, Path, State},
+  http::{HeaderMap, StatusCode},
+  response::{IntoResponse, Response},
+  routing::post,
+  Json, Router,
+};
+use serde::Serialize;
+use std::sync::{Arc, LazyLock};
+use tokio::sync::{oneshot, Mutex};
+
+#[derive(Clone)]
+struct TransportState {
+  token: Arc<str>,
+}
+struct Running {
+  port: u16,
+  shutdown: oneshot::Sender<()>,
+  task: tokio::task::JoinHandle<()>,
+}
+static RUNNING: LazyLock<Mutex<Option<Running>>> = LazyLock::new(|| Mutex::new(None));
+
+fn authorized(token: &str, expected: &str, headers: &HeaderMap) -> bool {
+  // A web origin is not an MCP client; forbid cross-origin browser requests.
+  !headers.contains_key("origin")
+    && constant_time_eq::constant_time_eq(token.as_bytes(), expected.as_bytes())
+}
+
+fn bearer(headers: &HeaderMap) -> Option<String> {
+  let (scheme, value) = headers
+    .get("authorization")?
+    .to_str()
+    .ok()?
+    .split_once(' ')?;
+  scheme
+    .eq_ignore_ascii_case("Bearer")
+    .then(|| value.to_string())
+}
+
+async fn bearer_message(
+  State(state): State<TransportState>,
+  headers: HeaderMap,
+  body: Bytes,
+) -> Response {
+  let Some(token) = bearer(&headers) else {
+    return StatusCode::UNAUTHORIZED.into_response();
+  };
+  message(Path(token), State(state), headers, body).await
+}
+
+async fn bearer_end(State(state): State<TransportState>, headers: HeaderMap) -> Response {
+  let Some(token) = bearer(&headers) else {
+    return StatusCode::UNAUTHORIZED.into_response();
+  };
+  end_session(Path(token), State(state), headers).await
+}
+
+async fn message(
+  Path(token): Path<String>,
+  State(state): State<TransportState>,
+  headers: HeaderMap,
+  body: Bytes,
+) -> Response {
+  if !authorized(&token, &state.token, &headers) {
+    return StatusCode::UNAUTHORIZED.into_response();
+  }
+  let session = headers.get("mcp-session-id").and_then(|h| h.to_str().ok());
+  match McpServer::instance()
+    .handle_local_message(session, &body)
+    .await
+  {
+    McpOutcome::Body {
+      body,
+      new_session_id,
+    } => {
+      let mut response = Json(body).into_response();
+      if let Some(id) = new_session_id {
+        if let Ok(value) = id.parse() {
+          response.headers_mut().insert("mcp-session-id", value);
+        }
+      }
+      response
+    }
+    McpOutcome::Accepted => StatusCode::ACCEPTED.into_response(),
+    McpOutcome::UnknownSession => StatusCode::NOT_FOUND.into_response(),
+    McpOutcome::BadRequest => StatusCode::BAD_REQUEST.into_response(),
+    McpOutcome::RateLimited { retry_after_secs } => {
+      let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+      if let Ok(value) = retry_after_secs.to_string().parse() {
+        response.headers_mut().insert("retry-after", value);
+      }
+      response
+    }
+  }
+}
+
+async fn end_session(
+  Path(token): Path<String>,
+  State(state): State<TransportState>,
+  headers: HeaderMap,
+) -> Response {
+  if !authorized(&token, &state.token, &headers) {
+    return StatusCode::UNAUTHORIZED.into_response();
+  }
+  if let Some(id) = headers.get("mcp-session-id").and_then(|h| h.to_str().ok()) {
+    // Authentication is required before any teardown, including unknown IDs.
+    McpServer::instance().end_local_session(id).await;
+  }
+  StatusCode::OK.into_response()
+}
+
+pub async fn start_if_enabled(app: tauri::AppHandle) -> Result<(), String> {
+  let manager = SettingsManager::instance();
+  let settings = manager
+    .load_settings()
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  if settings.mcp_enabled {
+    start_internal(&app, settings.mcp_port).await?;
+  }
+  Ok(())
+}
+
+async fn start_internal(app: &tauri::AppHandle, preferred: Option<u16>) -> Result<u16, String> {
+  let mut slot = RUNNING.lock().await;
+  if let Some(server) = slot.as_ref() {
+    return Ok(server.port);
+  }
+  let manager = SettingsManager::instance();
+  let token = match manager
+    .get_mcp_token(app)
+    .await
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?
+  {
+    Some(token) if token.len() >= 32 => token,
+    _ => manager
+      .generate_mcp_token(app)
+      .await
+      .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?,
+  };
+  let listener =
+    tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, preferred.unwrap_or(51080)))
+      .await
+      .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  let port = listener
+    .local_addr()
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?
+    .port();
+  let router = Router::new()
+    .route("/mcp", post(bearer_message).delete(bearer_end))
+    .route("/mcp/{token}", post(message).delete(end_session))
+    .layer(DefaultBodyLimit::max(McpServer::MAX_MESSAGE_BYTES))
+    .with_state(TransportState {
+      token: Arc::from(token),
+    });
+  let (send, receive) = oneshot::channel();
+  let mut settings = manager
+    .load_settings()
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  settings.mcp_enabled = true;
+  settings.mcp_port = Some(port);
+  manager
+    .save_settings(&settings)
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  let task = tokio::spawn(async move {
+    if axum::serve(listener, router)
+      .with_graceful_shutdown(async {
+        let _ = receive.await;
+      })
+      .await
+      .is_err()
+    {
+      log::error!("Local MCP listener stopped unexpectedly");
+    }
+  });
+  *slot = Some(Running {
+    port,
+    shutdown: send,
+    task,
+  });
+  log::info!("Local MCP listening on loopback port={port}");
+  Ok(port)
+}
+
+#[tauri::command]
+pub async fn start_mcp_server(
+  app_handle: tauri::AppHandle,
+  port: Option<u16>,
+) -> Result<u16, String> {
+  let saved_port = SettingsManager::instance()
+    .load_settings()
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?
+    .mcp_port;
+  start_internal(&app_handle, port.or(saved_port)).await
+}
+
+#[tauri::command]
+pub async fn stop_mcp_server(app_handle: tauri::AppHandle) -> Result<(), String> {
+  let mut slot = RUNNING.lock().await;
+  if let Some(mut server) = slot.take() {
+    let _ = server.shutdown.send(());
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut server.task)
+      .await
+      .is_err()
+    {
+      server.task.abort();
+      let _ = server.task.await;
+    }
+  }
+  let manager = SettingsManager::instance();
+  manager
+    .remove_mcp_token(&app_handle)
+    .await
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  let mut settings = manager
+    .load_settings()
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  settings.mcp_enabled = false;
+  manager
+    .save_settings(&settings)
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn get_mcp_server_status() -> bool {
+  RUNNING
+    .lock()
+    .await
+    .as_ref()
+    .is_some_and(|server| !server.task.is_finished())
+}
+
+#[derive(Serialize)]
+pub struct McpConfig {
+  pub port: u16,
+  pub token: String,
+}
+
+#[tauri::command]
+pub async fn get_mcp_config(app_handle: tauri::AppHandle) -> Result<Option<McpConfig>, String> {
+  let port = RUNNING
+    .lock()
+    .await
+    .as_ref()
+    .filter(|s| !s.task.is_finished())
+    .map(|s| s.port);
+  let Some(port) = port else {
+    return Ok(None);
+  };
+  let token = SettingsManager::instance()
+    .get_mcp_token(&app_handle)
+    .await
+    .map_err(|_| crate::backend_error("INTERNAL_ERROR"))?;
+  Ok(token.map(|token| McpConfig { port, token }))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn token_validation_refuses_wrong_token_and_web_origins() {
+    let mut headers = HeaderMap::new();
+    assert!(authorized("private-token", "private-token", &headers));
+    assert!(!authorized("wrong-token", "private-token", &headers));
+    headers.insert("origin", "https://untrusted.invalid".parse().unwrap());
+    assert!(!authorized("private-token", "private-token", &headers));
+  }
+}

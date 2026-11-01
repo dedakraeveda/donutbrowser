@@ -1,0 +1,93 @@
+{
+  "sourceSha256": "7309262853663eb58a9d8b018ad8844808b101eca92f6c4fe7c7dd847c6d0c17",
+  "candidateSha256": "54c30c2a9a73fbc48bb379369c48c1f1f04dc53f3e5d4eada5d57cae40e09185",
+  "diagnosticOnly": true,
+  "modifiedBytes": 50,
+  "ownSignedLicensingImplemented": false,
+  "nativePolicy": "offline-local-compiled-capabilities-no-license-server",
+  "runtimeVerified": false,
+  "legacyFingerprintAndStartupIdentityAdapted": true,
+  "patches": [
+    {
+      "rva": "0x4b8503c",
+      "before": "488b0d257ee018",
+      "after": "e9bf0000009090",
+      "reason": "enter-local-policy-after-empty-token-storage-initialization"
+    },
+    {
+      "rva": "0x4b852ef",
+      "before": "89f04883c4705ec3",
+      "after": "31c04883c4705ec3",
+      "reason": "local-automation-result-after-cleanup"
+    },
+    {
+      "rva": "0x4b851ba",
+      "before": "c6053791ce1800",
+      "after": "c6053791ce1801",
+      "reason": "local-editable-device-capability"
+    },
+    {
+      "rva": "0x4b8516a",
+      "before": "c7055c91ce1864000000",
+      "after": "c7055c91ce18ffffffff",
+      "reason": "native-supported-minus-one-protocol-rate-policy"
+    },
+    {
+      "rva": "0x2b4a8d",
+      "before": "bd04000000",
+      "after": "bdffffffff",
+      "reason": "native-supported-minus-one-concurrency-policy-preserve-slot-lifecycle"
+    },
+    {
+      "rva": "0x4b96298",
+      "before": "488b0dc96bdf18",
+      "after": "e93e0100009090",
+      "reason": "local-startup-capability-after-empty-token-storage-init"
+    },
+    {
+      "rva": "0x4b963db",
+      "before": "c70601000000",
+      "after": "c70600000000",
+      "reason": "local-cross-os-startup-allowed-native-verdict"
+    },
+    {
+      "rva": "0x4b749f4",
+      "before": "0f847a060000",
+      "after": "e97b06000090",
+      "reason": "local-legacy-device-replay-preserve-payload-and-cohort-validation"
+    },
+    {
+      "rva": "0x4b794f0",
+      "before": "0f8460010000",
+      "after": "e92402000090",
+      "reason": "local-capability-route-to-existing-grant-setter-os-value-unchanged"
+    },
+    {
+      "rva": "0x4b7b8d0",
+      "before": "0f8460010000",
+      "after": "e92402000090",
+      "reason": "local-capability-route-to-existing-grant-setter-os-value-unchanged"
+    },
+    {
+      "rva": "0x4b88960",
+      "before": "0f8460010000",
+      "after": "e92402000090",
+      "reason": "local-capability-route-to-existing-grant-setter-os-value-unchanged"
+    },
+    {
+      "rva": "0x4b653f8",
+      "before": "0f8d99000000",
+      "after": "e99a00000090",
+      "reason": "local-unlimited-generation-count-policy-preserve-ledger-and-device-registry"
+    }
+  ],
+  "schemaVersion": 1,
+  "engine": "Wayfern authorized local fork",
+  "technicalVersion": "155.0.8059.79",
+  "platform": "windows-x64",
+  "policyId": "authorized-local-v1",
+  "sourceRebuilt": false,
+  "originalExeSha256": "1b49fdb3b79de9427b247e0c6bb41a8668e5f7b75ba0da39e6d5518cb2cb25e3",
+  "nativeProtocolOnlyVerified": true,
+  "managerIntegrationVerified": false
+}

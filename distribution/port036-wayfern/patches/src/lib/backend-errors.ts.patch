@@ -1,0 +1,55 @@
+--- a/src/lib/backend-errors.ts
++++ b/src/lib/backend-errors.ts
+@@ -5,6 +5,12 @@
+  * Keep this list in sync with the codes used in `src-tauri/src/profile/password.rs`.
+  */
+ export type BackendErrorCode =
++  | "UPDATES_MANAGED_BY_AGENT"
++  | "CLOAK_BINARY_INVALID"
++  | "CLOAK_BINARY_NOT_CONFIGURED"
++  | "CLOAK_LAUNCH_FAILED"
++  | "CLOAK_CDP_UNAVAILABLE"
++  | "CLOAK_STOP_FAILED"
+   | "TABLE_PREFERENCES_INVALID"
+   | "TABLE_PREFERENCES_LOAD_FAILED"
+   | "TABLE_PREFERENCES_SAVE_FAILED"
+@@ -251,6 +257,7 @@
+   | "COOKIE_BOT_ENCRYPTED_SYNC_UNSUPPORTED"
+   | "COOKIE_BOT_UNKNOWN_PLATFORM"
+   | "COOKIE_BOT_UNSUPPORTED_PLATFORM"
++  | "COOKIE_BOT_UNSUPPORTED_ENGINE"
+   | "COOKIE_BOT_REQUIRES_EXIT_NODE"
+   // The profile HAS an exit, but only this machine can reach it (127.0.0.1, a
+   // LAN address, a `.local` name). Its own code because the fix is different:
+@@ -1021,6 +1028,8 @@
+       return t("backendErrors.cookieBotUnsupportedPlatform", {
+         platform: parsed.params?.platform ?? "",
+       });
++    case "COOKIE_BOT_UNSUPPORTED_ENGINE":
++      return t("backendErrors.cookieBotUnsupportedEngine");
+     case "COOKIE_BOT_REQUIRES_EXIT_NODE":
+     // One condition, two names: the desktop refuses it locally as
+     // REQUIRES_EXIT_NODE and the server refuses it as REQUIRES_PROXY. Both
+@@ -1164,6 +1173,22 @@
+       return t("backendErrors.wayfern152Required");
+     case "RECORDING_FAILED":
+       return t("backendErrors.recordingFailed", {
++        detail: parsed.params?.detail ?? "",
++      });
++    case "UPDATES_MANAGED_BY_AGENT":
++      return t("backendErrors.updatesManagedByAgent");
++    case "CLOAK_BINARY_INVALID":
++      return t("backendErrors.cloakBinaryInvalid");
++    case "CLOAK_BINARY_NOT_CONFIGURED":
++      return t("backendErrors.cloakBinaryNotConfigured");
++    case "CLOAK_LAUNCH_FAILED":
++      return t("backendErrors.cloakLaunchFailed", {
++        detail: parsed.params?.detail ?? "",
++      });
++    case "CLOAK_CDP_UNAVAILABLE":
++      return t("backendErrors.cloakCdpUnavailable");
++    case "CLOAK_STOP_FAILED":
++      return t("backendErrors.cloakStopFailed", {
+         detail: parsed.params?.detail ?? "",
+       });
+     case "LAUNCH_CONSENT_EXPIRED":

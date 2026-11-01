@@ -1,0 +1,10 @@
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -389,6 +389,7 @@
+  * device: every profile made from it gets its own.
+  */
+ export interface TemplateSettings {
++  browser?: "wayfern" | "cloak" | null;
+   name_prefix?: string | null;
+   proxy_id?: string | null;
+   vpn_id?: string | null;

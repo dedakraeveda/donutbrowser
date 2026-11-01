@@ -1,0 +1,96 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::Duration;
+
+pub const DEFAULT_DNS_REFRESH_HOURS: u64 = 12;
+pub const DEFAULT_GEOIP_REFRESH_HOURS: u64 = 72;
+pub const POLICY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct DataUpdatePolicy {
+  pub dns_refresh_hours: u64,
+  pub geoip_refresh_hours: u64,
+}
+
+impl Default for DataUpdatePolicy {
+  fn default() -> Self {
+    Self {
+      dns_refresh_hours: DEFAULT_DNS_REFRESH_HOURS,
+      geoip_refresh_hours: DEFAULT_GEOIP_REFRESH_HOURS,
+    }
+  }
+}
+
+impl DataUpdatePolicy {
+  fn normalized(mut self) -> Self {
+    // Keep accidental zero/tiny values from turning an edited file into a
+    // tight download loop. The upper bounds still allow effectively monthly
+    // data refresh without disabling the safety checks.
+    self.dns_refresh_hours = self.dns_refresh_hours.clamp(1, 24 * 30);
+    self.geoip_refresh_hours = self.geoip_refresh_hours.clamp(6, 24 * 30);
+    self
+  }
+
+  pub fn dns_refresh_interval(&self) -> Duration {
+    Duration::from_secs(self.dns_refresh_hours * 60 * 60)
+  }
+
+  pub fn geoip_refresh_interval(&self) -> Duration {
+    Duration::from_secs(self.geoip_refresh_hours * 60 * 60)
+  }
+}
+
+pub fn path() -> PathBuf {
+  crate::app_dirs::data_dir().join("data-update-policy.json")
+}
+
+pub fn load() -> DataUpdatePolicy {
+  std::fs::read_to_string(path())
+    .ok()
+    .and_then(|content| serde_json::from_str::<DataUpdatePolicy>(&content).ok())
+    .unwrap_or_default()
+    .normalized()
+}
+
+pub fn ensure_config_file() -> Result<PathBuf, String> {
+  let path = path();
+  if path.exists() {
+    return Ok(path);
+  }
+  if let Some(parent) = path.parent() {
+    std::fs::create_dir_all(parent)
+      .map_err(|e| format!("Failed to create data update policy directory: {e}"))?;
+  }
+  let body = serde_json::to_string_pretty(&DataUpdatePolicy::default())
+    .map_err(|e| format!("Failed to serialize data update policy: {e}"))?;
+  let temp = path.with_extension("json.tmp");
+  std::fs::write(&temp, format!("{body}\n"))
+    .map_err(|e| format!("Failed to write data update policy: {e}"))?;
+  std::fs::rename(&temp, &path)
+    .map_err(|e| format!("Failed to install data update policy: {e}"))?;
+  Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn defaults_match_the_authorized_fork_policy() {
+    let policy = DataUpdatePolicy::default();
+    assert_eq!(policy.dns_refresh_hours, 12);
+    assert_eq!(policy.geoip_refresh_hours, 72);
+  }
+
+  #[test]
+  fn edited_values_are_bounded_before_becoming_timers() {
+    let policy = DataUpdatePolicy {
+      dns_refresh_hours: 0,
+      geoip_refresh_hours: u64::MAX,
+    }
+    .normalized();
+    assert_eq!(policy.dns_refresh_hours, 1);
+    assert_eq!(policy.geoip_refresh_hours, 24 * 30);
+  }
+}

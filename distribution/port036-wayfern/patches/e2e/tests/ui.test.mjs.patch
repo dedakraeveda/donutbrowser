@@ -1,0 +1,111 @@
+--- a/e2e/tests/ui.test.mjs
++++ b/e2e/tests/ui.test.mjs
+@@ -118,6 +118,42 @@
+     (profile) => profile.name === name,
+   );
+ }
++
++test("authorized CBrowser picker and bulk templates preserve the external engine contract", {
++  skip: !process.env.DONUT_E2E_CBROWSER_PATH,
++}, async () => {
++  await withApp(
++    "ui-cbrowser-create",
++    async (app) => {
++      await openProfileCreation(app);
++      await app.waitFor(
++        () =>
++          app.execute(
++            "return document.querySelector('#profile-engine')?.textContent.includes('CBrowser');",
++          ),
++        { description: "CBrowser capability discovery" },
++      );
++      await app.fillSelector("#profile-name", "CBrowser UI fixture");
++      await app.capture("cbrowser-create-picker");
++      const profile = await submitProfileCreation(app, "CBrowser UI fixture");
++      assert.equal(profile.browser, "cloak");
++      assert.equal(profile.version, "external");
++      const batch = await app.invoke("bulk_create_profiles", {
++        settings: { browser: "cloak" },
++        name: "CBrowser batch",
++        count: 2,
++      });
++      assert.equal(batch.error, null);
++      assert.equal(batch.created.length, 2);
++      assert.ok(
++        batch.created.every(
++          (p) => p.browser === "cloak" && p.version === "external",
++        ),
++      );
++    },
++    { extraEnv: { BROWSER_BINARY_PATH: process.env.DONUT_E2E_CBROWSER_PATH } },
++  );
++});
+ 
+ test("profile creation stays compact and saves basic, protected, and ephemeral profiles", async () => {
+   await withApp(
+@@ -284,7 +320,7 @@
+       assert.equal(osOptions.length, 5, JSON.stringify(osOptions));
+       assert.deepEqual(
+         osOptions.filter((option) => !option.disabled).map((o) => o.text),
+-        [hostOs],
++        ["Windows", "macOS", "Linux", "Android", "iOS"],
+       );
+       assert.ok(
+         osOptions
+@@ -5928,14 +5964,17 @@
+       assert.ok(listed.includes(id), `${id} is listed`);
+     }
+     assert.ok(!listed.includes("cookieBot"));
+-    assert.ok(!listed.includes("synchronizer"));
++    assert.ok(
++      listed.includes("synchronizer"),
++      "local fork exposes its synchronizer without a cloud subscription",
++    );
+     assert.ok(!listed.includes("team"));
+     assert.equal(
+       await app.execute(
+         `return document.querySelectorAll('[data-slot="tips-section"]').length;`,
+       ),
+-      4,
+-      "four sections, and no plan section without a plan",
++      5,
++      "local capabilities include synchronizer tips without granting cloud services",
+     );
+     assert.equal(
+       await app.execute(`return document.activeElement?.dataset.slot;`),
+@@ -5983,6 +6022,11 @@
+     await app.capture("tips-browse");
+ 
+     // The arrows page through the catalog from the keyboard.
++    // Windows tauri-wd's pointer click may leave focus on the old More
++    // trigger; keyboard navigation requires a focused control INSIDE the dialog.
++    await app.execute(
++      'document.querySelector(\'[data-slot="tips-list-item"][data-tip-id="trash"]\').focus();',
++    );
+     await app.pressShortcut({ key: "ArrowRight" });
+     await app.waitFor(
+       () =>
+@@ -6986,7 +7030,7 @@
+         await app.execute(
+           'return document.querySelector("#wayfern-launch-args").disabled;',
+         ),
+-        true,
++        false,
+       );
+       await app.clickSelector('[data-slot="profile-info-close"]');
+       try {
+@@ -7065,9 +7109,12 @@
+         await app.waitFor(
+           () =>
+             app.execute(
+-              'return document.querySelector("#wayfern-launch-args").disabled;',
++              'return !document.querySelector("#wayfern-launch-args").disabled;',
+             ),
+-          { description: "launch arguments locked after sign out" },
++          {
++            description:
++              "local launch arguments remain editable after cloud sign out",
++          },
+         );
+         await app.clickText(en.common.buttons.clear, { exact: true });
+         await app.clickText(en.common.buttons.save, { exact: true });

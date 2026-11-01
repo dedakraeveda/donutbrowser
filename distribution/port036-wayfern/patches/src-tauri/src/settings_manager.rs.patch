@@ -1,0 +1,138 @@
+--- a/src-tauri/src/settings_manager.rs
++++ b/src-tauri/src/settings_manager.rs
+@@ -223,6 +223,12 @@
+ #[derive(Debug, Serialize, Deserialize, Clone)]
+ pub struct AppSettings {
+   #[serde(default)]
++  pub mcp_enabled: bool,
++  #[serde(default)]
++  pub mcp_port: Option<u16>,
++  #[serde(default)]
++  pub mcp_token: Option<String>,
++  #[serde(default)]
+   pub set_as_default_browser: bool,
+   #[serde(default = "default_theme")]
+   pub theme: String, // "light", "dark", or "system"
+@@ -391,6 +397,10 @@
+   /// Open again, at startup, the profiles that were running when Donut quit.
+   #[serde(default)]
+   pub reopen_running_profiles: bool,
++  /// Optional machine-local override for the bundled CBrowser executable.
++  /// The binary is never copied into Donut or synced.
++  #[serde(default)]
++  pub cloak_binary_path: Option<String>,
+ }
+ 
+ #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+@@ -520,6 +530,9 @@
+       window_resize_warning_dismissed: false,
+       fingerprint_gate_disabled: false,
+       vpn_extension_warning_disabled: false,
++      mcp_enabled: false,
++      mcp_port: None,
++      mcp_token: None,
+       onboarding_completed: false,
+       disable_auto_updates: false,
+       keep_decrypted_profiles_in_ram: false,
+@@ -547,6 +560,7 @@
+       system_notifications: true,
+       launch_at_login: false,
+       reopen_running_profiles: false,
++      cloak_binary_path: None,
+     }
+   }
+ }
+@@ -627,6 +641,8 @@
+     // every caller that happens to hold such a struct.
+     let mut on_disk = settings.clone();
+     on_disk.mcp_remote_key = None;
++    on_disk.mcp_token = None;
++    on_disk.api_token = None;
+ 
+     let settings_file = self.get_settings_file();
+     let json = serde_json::to_string_pretty(&on_disk)?;
+@@ -729,6 +745,41 @@
+ 
+   fn mcp_remote_key_file(&self) -> PathBuf {
+     self.get_settings_dir().join("mcp_remote_key.dat")
++  }
++
++  fn mcp_token_file(&self) -> PathBuf {
++    self.get_settings_dir().join("mcp_token.dat")
++  }
++
++  pub async fn generate_mcp_token(
++    &self,
++    app_handle: &tauri::AppHandle,
++  ) -> Result<String, Box<dyn std::error::Error>> {
++    let token = Self::random_token();
++    self.store_mcp_token(app_handle, &token).await?;
++    Ok(token)
++  }
++
++  pub async fn store_mcp_token(
++    &self,
++    _app_handle: &tauri::AppHandle,
++    token: &str,
++  ) -> Result<(), Box<dyn std::error::Error>> {
++    Self::encrypt_to_file(&self.mcp_token_file(), b"DBMCP", token)
++  }
++
++  pub async fn get_mcp_token(
++    &self,
++    _app_handle: &tauri::AppHandle,
++  ) -> Result<Option<String>, Box<dyn std::error::Error>> {
++    Self::decrypt_from_file(&self.mcp_token_file(), b"DBMCP")
++  }
++
++  pub async fn remove_mcp_token(
++    &self,
++    _app_handle: &tauri::AppHandle,
++  ) -> Result<(), Box<dyn std::error::Error>> {
++    Self::remove_secret_file(&self.mcp_token_file())
+   }
+ 
+   pub async fn generate_api_token(
+@@ -855,6 +906,10 @@
+     .map_err(|e| format!("Failed to load settings: {e}"))?;
+ 
+   // Always load tokens for display purposes if they exist
++  settings.mcp_token = manager
++    .get_mcp_token(&app_handle)
++    .await
++    .map_err(|e| e.to_string())?;
+   settings.api_token = manager
+     .get_api_token(&app_handle)
+     .await
+@@ -940,6 +995,13 @@
+       settings.feedback_sent_at = current.feedback_sent_at;
+       settings.account_sync_server_url = current.account_sync_server_url;
+       settings.sync_source = current.sync_source;
++      // Cloak setup is owned by the dedicated binary picker. A settings dialog
++      // opened before that picker ran must not overwrite its machine-local path.
++      settings.cloak_binary_path = current.cloak_binary_path;
++      // General settings editors do not own the dedicated local MCP lifecycle.
++      settings.mcp_enabled = current.mcp_enabled;
++      settings.mcp_port = current.mcp_port;
++      settings.mcp_token = None;
+     }
+   } else {
+     settings.mcp_remote_enabled = false;
+@@ -2101,6 +2163,9 @@
+       window_resize_warning_dismissed: false,
+       fingerprint_gate_disabled: false,
+       vpn_extension_warning_disabled: false,
++      mcp_enabled: false,
++      mcp_port: None,
++      mcp_token: None,
+       onboarding_completed: false,
+       disable_auto_updates: false,
+       keep_decrypted_profiles_in_ram: false,
+@@ -2128,6 +2193,7 @@
+       system_notifications: true,
+       launch_at_login: false,
+       reopen_running_profiles: false,
++      cloak_binary_path: None,
+     };
+ 
+     let save_result = manager.save_settings(&test_settings);

@@ -1,0 +1,47 @@
+--- a/scripts/sync-test-harness.mjs
++++ b/scripts/sync-test-harness.mjs
+@@ -11,7 +11,7 @@
+  * Usage: node scripts/sync-test-harness.mjs
+  */
+ 
+-import { spawn, execSync } from "child_process";
++import { spawn, execFileSync } from "child_process";
+ import { createWriteStream, existsSync } from "fs";
+ import { mkdir } from "fs/promises";
+ import http from "http";
+@@ -107,6 +107,7 @@
+     }),
+     {
+       env: { ...process.env },
++      windowsHide: true,
+       stdio: ["ignore", "pipe", "pipe"],
+     },
+   );
+@@ -151,16 +152,15 @@
+ }
+ 
+ const SYNC_BINARY = path.join(
+-  ROOT_DIR,
+-  "donut-sync",
+-  "target",
++  process.env.CARGO_TARGET_DIR || path.join(ROOT_DIR, "donut-sync", "target"),
+   "debug",
+   process.platform === "win32" ? "donut-sync.exe" : "donut-sync",
+ );
+ 
+ async function buildDonutSync() {
+   log("Building donut-sync...");
+-  execSync("cargo build --locked", {
++  execFileSync("cargo", ["build", "--locked"], {
++    windowsHide: true,
+     cwd: path.join(ROOT_DIR, "donut-sync"),
+     stdio: process.env.VERBOSE ? "inherit" : "ignore",
+   });
+@@ -282,6 +282,7 @@
+         SYNC_TOKEN,
+       },
+       stdio: "inherit",
++      windowsHide: true,
+     });
+ 
+     proc.on("close", (code) => {

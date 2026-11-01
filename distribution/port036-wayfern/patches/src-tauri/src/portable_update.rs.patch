@@ -1,0 +1,74 @@
+--- a/src-tauri/src/portable_update.rs
++++ b/src-tauri/src/portable_update.rs
+@@ -50,6 +50,9 @@
+   zip: &Path,
+   install_dir: &Path,
+ ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
++  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
++    return Err(crate::app_auto_updater::manual_update_policy_error().into());
++  }
+   let staged = update_dir(install_dir).join(STAGED_DIR);
+   if staged.exists() {
+     fs::remove_dir_all(&staged)?;
+@@ -77,6 +80,16 @@
+ /// `exe_name`, the name of the running executable. When a move fails, the
+ /// moves before it are undone. Returns the number of files replaced.
+ pub fn apply(package: &Path, install_dir: &Path, exe_name: &OsStr) -> io::Result<usize> {
++  if crate::entitlements::EntitlementsPolicy::manual_app_updates_only() {
++    return Err(io::Error::new(
++      io::ErrorKind::PermissionDenied,
++      crate::app_auto_updater::manual_update_policy_error(),
++    ));
++  }
++  apply_files(package, install_dir, exe_name)
++}
++
++fn apply_files(package: &Path, install_dir: &Path, exe_name: &OsStr) -> io::Result<usize> {
+   let old = update_dir(install_dir).join(OLD_DIR);
+   if old.exists() {
+     fs::remove_dir_all(&old)?;
+@@ -274,7 +287,7 @@
+   fn replaces_the_program_and_keeps_the_data() {
+     let (_tmp, install, package) = folder();
+     assert_eq!(
+-      apply(&package, &install, OsStr::new("Donut.exe")).unwrap(),
++      apply_files(&package, &install, OsStr::new("Donut.exe")).unwrap(),
+       5
+     );
+     assert_eq!(read(&install.join("Donut.exe")), "app 2");
+@@ -299,7 +312,7 @@
+   fn a_renamed_executable_keeps_its_name() {
+     let (_tmp, install, package) = folder();
+     fs::rename(install.join("Donut.exe"), install.join("Work.exe")).unwrap();
+-    apply(&package, &install, OsStr::new("Work.exe")).unwrap();
++    apply_files(&package, &install, OsStr::new("Work.exe")).unwrap();
+     assert_eq!(read(&install.join("Work.exe")), "app 2");
+     assert!(!install.join("Donut.exe").exists());
+   }
+@@ -309,7 +322,7 @@
+     let (_tmp, install, package) = folder();
+     write(&package.join("data/profiles/a/Cookies"), "empty");
+     write(&package.join("logs/DonutBrowser.log"), "empty");
+-    apply(&package, &install, OsStr::new("Donut.exe")).unwrap();
++    apply_files(&package, &install, OsStr::new("Donut.exe")).unwrap();
+     assert_eq!(read(&install.join("data/profiles/a/Cookies")), "login");
+     assert_eq!(read(&install.join("logs/DonutBrowser.log")), "log");
+   }
+@@ -320,7 +333,7 @@
+     // A file where the package has a folder: the license cannot move in,
+     // after Donut.exe and donut-proxy.exe did.
+     write(&install.join("licenses"), "in the way");
+-    assert!(apply(&package, &install, OsStr::new("Donut.exe")).is_err());
++    assert!(apply_files(&package, &install, OsStr::new("Donut.exe")).is_err());
+     assert_eq!(read(&install.join("Donut.exe")), "app 1");
+     assert_eq!(read(&install.join("donut-proxy.exe")), "proxy 1");
+     assert_eq!(read(&install.join("licenses")), "in the way");
+@@ -342,7 +355,7 @@
+       .stdout(std::process::Stdio::null())
+       .spawn()
+       .unwrap();
+-    let result = apply(&package, &install, OsStr::new("Donut.exe"));
++    let result = apply_files(&package, &install, OsStr::new("Donut.exe"));
+     let _ = running.kill();
+     let _ = running.wait();
+     result.unwrap();

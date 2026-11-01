@@ -1,0 +1,20 @@
+--- a/src-tauri/src/mcp_views.rs
++++ b/src-tauri/src/mcp_views.rs
+@@ -206,10 +206,15 @@
+ /// The `list_profiles` answer. Only Wayfern profiles can be driven over MCP;
+ /// the others are counted, so an agent knows they exist.
+ pub fn list_profiles(profiles: &[BrowserProfile], names: &Names, query: &ProfileQuery) -> Value {
+-  let hidden = profiles.iter().filter(|p| p.browser != "wayfern").count();
++  let hidden = profiles
++    .iter()
++    .filter(|p| !crate::browser::BrowserType::supports_local_automation(&p.browser))
++    .count();
+   let mut found: Vec<&BrowserProfile> = profiles
+     .iter()
+-    .filter(|p| p.browser == "wayfern" && matches(p, names, query))
++    .filter(|p| {
++      crate::browser::BrowserType::supports_local_automation(&p.browser) && matches(p, names, query)
++    })
+     .collect();
+   found.sort_by(|a, b| {
+     a.name

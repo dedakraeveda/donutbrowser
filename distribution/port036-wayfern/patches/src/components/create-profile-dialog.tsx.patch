@@ -1,0 +1,175 @@
+--- a/src/components/create-profile-dialog.tsx
++++ b/src/components/create-profile-dialog.tsx
+@@ -130,7 +130,7 @@
+   onClose: () => void;
+   onCreateProfile: (profileData: {
+     name: string;
+-    browserStr: "wayfern";
++    browserStr: "wayfern" | "cloak";
+     version: string;
+     releaseType: string;
+     proxyId?: string;
+@@ -169,6 +169,33 @@
+   const groupListboxId = useId();
+   const groupValueId = useId();
+   const [profileName, setProfileName] = useState("");
++  const [selectedBrowser, setSelectedBrowser] = useState<"wayfern" | "cloak">(
++    "wayfern",
++  );
++  const [cbrowser, setCBrowser] = useState<{
++    available: boolean;
++    release: string;
++    version: string;
++  } | null>(null);
++  useEffect(() => {
++    if (!isOpen) return;
++    let active = true;
++    void invoke<{ available: boolean; release: string; version: string }>(
++      "get_cloak_engine_status",
++    )
++      .then((status) => {
++        if (active) {
++          setCBrowser(status);
++          if (status.available) setSelectedBrowser("cloak");
++        }
++      })
++      .catch(() => {
++        if (active) setCBrowser(null);
++      });
++    return () => {
++      active = false;
++    };
++  }, [isOpen]);
+   const [advancedOpen, setAdvancedOpen] = useState(false);
+   const [selectedProxyId, setSelectedProxyId] = useState<string>();
+   const [proxyPopoverOpen, setProxyPopoverOpen] = useState(false);
+@@ -355,10 +382,15 @@
+   const downloadedVersions = downloadedVersionsMap.wayfern ?? [];
+   const latestVersion = releaseTypes.stable;
+   const creatableVersion =
+-    latestVersion && downloadedVersions.includes(latestVersion)
+-      ? latestVersion
+-      : downloadedVersions[0];
+-  const downloading = isBrowserDownloading("wayfern");
++    selectedBrowser === "cloak"
++      ? cbrowser?.available
++        ? cbrowser.version
++        : undefined
++      : latestVersion && downloadedVersions.includes(latestVersion)
++        ? latestVersion
++        : downloadedVersions[0];
++  const downloading =
++    selectedBrowser === "wayfern" && isBrowserDownloading("wayfern");
+   // Several profiles, or one from a template, go to one batch, which stops at
+   // the allowance even where a single profile past it is only a warning.
+   const batchRefused =
+@@ -370,9 +402,8 @@
+     !creatableVersion ||
+     downloading ||
+     isCreating ||
+-    hourlyCapReached ||
+-    closeABrowser ||
+-    batchRefused ||
++    (selectedBrowser === "wayfern" &&
++      (hourlyCapReached || closeABrowser || batchRefused)) ||
+     !dnsServerValid;
+   const selectedVpn = selectedProxyId?.startsWith("vpn-")
+     ? vpnConfigs.find((vpn) => vpn.id === selectedProxyId.slice(4))
+@@ -439,6 +470,7 @@
+     const spread = base?.proxy_ids ?? [];
+     return {
+       ...base,
++      browser: selectedBrowser,
+       name_prefix: profileName.trim() || null,
+       proxy_id: proxyId,
+       vpn_id: isVpn ? (selectedProxyId?.slice(4) ?? null) : null,
+@@ -460,6 +492,7 @@
+     setAppliedTemplate(template);
+     if (!template) return;
+     const settings = template.settings;
++    setSelectedBrowser(settings.browser === "cloak" ? "cloak" : "wayfern");
+     setSelectedProxyId(
+       settings.vpn_id
+         ? `vpn-${settings.vpn_id}`
+@@ -610,12 +643,13 @@
+     try {
+       await onCreateProfile({
+         name: profileName.trim(),
+-        browserStr: "wayfern",
++        browserStr: selectedBrowser,
+         version: creatableVersion,
+         releaseType: "stable",
+         proxyId: isVpnSelection ? undefined : selectedProxyId,
+         vpnId: isVpnSelection ? selectedProxyId?.slice(4) : undefined,
+-        wayfernConfig,
++        wayfernConfig:
++          selectedBrowser === "wayfern" ? wayfernConfig : undefined,
+         groupId: groupIdForCreate,
+         extensionGroupId: selectedExtensionGroupId,
+         ephemeral,
+@@ -754,6 +788,30 @@
+           data-slot="profile-create-fields"
+           className="-mx-1 flex min-h-0 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-2"
+         >
++          <div className="flex items-center gap-3">
++            <Label htmlFor="profile-engine">
++              {t("createProfile.engine.label")}
++            </Label>
++            <Select
++              value={selectedBrowser}
++              onValueChange={(value) =>
++                setSelectedBrowser(value as "wayfern" | "cloak")
++              }
++              disabled={isCreating}
++            >
++              <SelectTrigger id="profile-engine" className="flex-1">
++                <SelectValue />
++              </SelectTrigger>
++              <SelectContent>
++                <SelectItem value="cloak" disabled={!cbrowser?.available}>
++                  {t("createProfile.engine.cloak")}
++                </SelectItem>
++                <SelectItem value="wayfern">
++                  {t("createProfile.engine.wayfern")}
++                </SelectItem>
++              </SelectContent>
++            </Select>
++          </div>
+           <motion.div
+             data-slot="profile-name-field"
+             className="flex items-center gap-2 rounded-xl bg-foreground/4 p-2 transition-[background-color,box-shadow] duration-150 focus-within:bg-foreground/6 focus-within:ring-2 focus-within:ring-foreground/10 hover:bg-foreground/5"
+@@ -1510,19 +1568,21 @@
+                           </Button>
+                         </div>
+                       )}
+-                    <WayfernConfigForm
+-                      className="[&_[data-slot=select-trigger]]:w-full"
+-                      config={wayfernConfig}
+-                      onConfigChange={updateWayfernConfig}
+-                      isCreating
+-                      forceAdvanced
+-                      readOnly={isCreating}
+-                      crossOsUnlocked={crossOsUnlocked}
+-                      limitedMode={!crossOsUnlocked}
+-                      osPicker={false}
+-                      profileVersion={creatableVersion}
+-                      profileBrowser="wayfern"
+-                    />
++                    {selectedBrowser === "wayfern" && (
++                      <WayfernConfigForm
++                        className="[&_[data-slot=select-trigger]]:w-full"
++                        config={wayfernConfig}
++                        onConfigChange={updateWayfernConfig}
++                        isCreating
++                        forceAdvanced
++                        readOnly={isCreating}
++                        crossOsUnlocked={crossOsUnlocked}
++                        limitedMode={!crossOsUnlocked}
++                        osPicker={false}
++                        profileVersion={creatableVersion}
++                        profileBrowser="wayfern"
++                      />
++                    )}
+                   </div>
+                 </div>
+               </SoftFields>

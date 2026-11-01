@@ -1,0 +1,167 @@
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -175,14 +175,17 @@
+ mod browser_runner;
+ mod browser_tabs;
+ mod browser_version_manager;
++mod cbrowser_manager;
+ mod cdp_target;
+ mod checksum;
++mod data_update_policy;
+ mod default_browser;
+ mod diagnostics;
+ mod dialer;
+ pub mod dns_blocklist;
+ mod downloaded_browsers_registry;
+ mod downloader;
++pub mod entitlements;
+ mod entity_trash;
+ mod ephemeral_dirs;
+ mod extension_fetch;
+@@ -203,6 +206,7 @@
+ mod launch_gate;
+ mod launch_gate_prefs;
+ mod legacy_autostart;
++mod local_mcp;
+ mod log_redaction;
+ pub mod log_streak;
+ mod log_viewer;
+@@ -238,6 +242,7 @@
+ pub mod traffic_stats;
+ mod wayfern_cdp;
+ mod wayfern_identity_storage;
++mod wayfern_local_policy;
+ mod wayfern_manager;
+ mod wayfern_persona;
+ mod wayfern_terms;
+@@ -380,6 +385,8 @@
+ use browser_version_manager::get_browser_release_types;
+ 
+ use api_server::{get_api_server_status, start_api_server, stop_api_server};
++use cbrowser_manager::{get_cloak_engine_status, set_cloak_binary_path};
++use local_mcp::{get_mcp_config, get_mcp_server_status, start_mcp_server, stop_mcp_server};
+ 
+ pub trait WindowExt {
+   #[cfg(target_os = "macos")]
+@@ -1572,6 +1579,26 @@
+ }
+ 
+ #[tauri::command]
++async fn add_local_mcp_to_agent(
++  app_handle: tauri::AppHandle,
++  agent_id: String,
++) -> Result<(), String> {
++  if !mcp_integrations::agent_exists(&agent_id) {
++    return Err(backend_error("MCP_AGENT_UNKNOWN"));
++  }
++  local_mcp::start_mcp_server(app_handle.clone(), None).await?;
++  let config = local_mcp::get_mcp_config(app_handle)
++    .await?
++    .ok_or_else(|| backend_error("INTERNAL_ERROR"))?;
++  let target = mcp_integrations::McpTarget {
++    url: format!("http://127.0.0.1:{}/mcp", config.port),
++    bearer: config.token,
++  };
++  install_mcp_agent(&agent_id, &target)
++    .map_err(|e| backend_error_with_detail("MCP_AGENT_INSTALL_FAILED", e))
++}
++
++#[tauri::command]
+ async fn add_mcp_to_agent(agent_id: String) -> Result<(), String> {
+   if !mcp_integrations::agent_exists(&agent_id) {
+     return Err(backend_error("MCP_AGENT_UNKNOWN"));
+@@ -1606,8 +1633,8 @@
+ 
+ fn reinstall_mcp_agents_with(target: &mcp_integrations::McpTarget) -> Vec<String> {
+   let mut failed = mcp_integrations::reinstall_generic(target);
+-  // Any bundle of ours, one from the old local server included.
+-  if is_mcp_in_claude_desktop_internal() {
++  // A remote-key refresh must never silently move a local MCP client to cloud.
++  if claude_desktop_connected() {
+     if let Err(e) = add_mcp_to_claude_desktop_internal(target) {
+       log::warn!("MCP client entry refresh failed agent=claude-desktop err=\"{e}\"");
+       failed.push("claude-desktop".to_string());
+@@ -2710,6 +2737,7 @@
+ 
+       // Recover ephemeral dir mappings from RAM-backed storage (tmpfs/ramdisk)
+       ephemeral_dirs::recover_ephemeral_dirs();
++      if let Err(error) = data_update_policy::ensure_config_file() { log::warn!("Data update policy unavailable: {error}"); }
+ 
+       // Create the main window programmatically
+       // Under a headless automation driver, create the window hidden and
+@@ -2965,8 +2993,11 @@
+ 
+         tauri::async_runtime::spawn(async move {
+           mcp_server::McpServer::instance()
+-            .attach_app_handle(engine_handle)
++            .attach_app_handle(engine_handle.clone())
+             .await;
++          if let Err(error) = crate::local_mcp::start_if_enabled(engine_handle).await {
++            log::error!("Local MCP startup failed: {error}");
++          }
+         });
+ 
+         let settings_mgr = settings_manager::SettingsManager::instance();
+@@ -3174,7 +3205,7 @@
+       if !e2e_automation_enabled() {
+         // Start periodic cleanup task for unused binaries.
+         tauri::async_runtime::spawn(async move {
+-          let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(43200));
++          let mut interval = tokio::time::interval(data_update_policy::POLICY_POLL_INTERVAL);
+           loop {
+             interval.tick().await;
+             if let Some(scheduler) = sync::get_global_scheduler() {
+@@ -3202,7 +3233,9 @@
+           }
+         });
+ 
+-        tauri::async_runtime::spawn(app_auto_updater::run_periodic_checks());
++        if !entitlements::EntitlementsPolicy::manual_app_updates_only() {
++          tauri::async_runtime::spawn(app_auto_updater::run_periodic_checks());
++        }
+ 
+         let app_handle_geoip = app.handle().clone();
+         tauri::async_runtime::spawn(async move {
+@@ -3722,6 +3755,12 @@
+       is_geoip_database_available,
+       download_geoip_database,
+       start_api_server,
++      get_cloak_engine_status,
++      set_cloak_binary_path,
++      start_mcp_server,
++      stop_mcp_server,
++      get_mcp_server_status,
++      get_mcp_config,
+       stop_api_server,
+       get_api_server_status,
+       check_integration_connection,
+@@ -3781,6 +3820,7 @@
+       has_acknowledged_trial_expiration,
+       list_mcp_agents,
+       add_mcp_to_agent,
++      add_local_mcp_to_agent,
+       remove_mcp_from_agent,
+       set_mcp_toolsets,
+       local_storage::get_profile_local_storage_stats,
+@@ -3926,6 +3966,7 @@
+         // Same reasoning for the remote-control bridge, plus one of its own:
+         // one account holds one bridge at a time, so an instance that exits
+         // without hanging up delays the account's next machine.
++        tauri::async_runtime::block_on(cbrowser_manager::shutdown_geo_browsers());
+         mcp_remote::stop(None);
+         tauri::async_runtime::block_on(discard_stale_ephemeral_dirs());
+         ephemeral_dirs::detach_unused_ram_disk();
+@@ -4122,7 +4163,13 @@
+   fn check_unused_commands(verbose: bool) {
+     // Commands that are intentionally not used in the frontend
+     // but are used via MCP server or other programmatic APIs
++    // These remain public IPC contracts for local agent clients and integration tests.
+     let mcp_only_commands = [
++      "set_cloak_binary_path",
++      "start_mcp_server",
++      "stop_mcp_server",
++      "get_mcp_server_status",
++      "get_mcp_config",
+       "connect_vpn",
+       "disconnect_vpn",
+       "get_vpn_status",

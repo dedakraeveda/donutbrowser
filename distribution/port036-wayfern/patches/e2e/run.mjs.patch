@@ -1,0 +1,28 @@
+--- a/e2e/run.mjs
++++ b/e2e/run.mjs
+@@ -37,12 +37,12 @@
+ const executableSuffix = isWindows ? ".exe" : "";
+ const appManifestDir = path.join(projectRoot, "e2e", "app");
+ const appBinary = path.join(
+-  appManifestDir,
+-  "target",
++  process.env.CARGO_TARGET_DIR || path.join(appManifestDir, "target"),
+   "debug",
+   `donutbrowser-e2e${executableSuffix}`,
+ );
+-const driverRoot = path.join(projectRoot, "e2e", ".driver");
++const driverRoot =
++  process.env.DONUT_E2E_DRIVER_ROOT || path.join(projectRoot, "e2e", ".driver");
+ const driverBinary = path.join(
+   driverRoot,
+   "bin",
+@@ -635,8 +635,7 @@
+   const syncRoot = path.join(projectRoot, "donut-sync");
+   run("cargo", ["build", "--locked"], syncRoot);
+   const syncBinary = path.join(
+-    syncRoot,
+-    "target",
++    process.env.CARGO_TARGET_DIR || path.join(syncRoot, "target"),
+     "debug",
+     `donut-sync${executableSuffix}`,
+   );

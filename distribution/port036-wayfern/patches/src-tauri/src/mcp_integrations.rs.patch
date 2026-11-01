@@ -1,0 +1,43 @@
+--- a/src-tauri/src/mcp_integrations.rs
++++ b/src-tauri/src/mcp_integrations.rs
+@@ -1293,7 +1293,11 @@
+     .filter(|spec| spec.id != "claude-desktop")
+   {
+     let connection = connection_in(env, spec.id, None);
+-    if connection == Connection::Absent {
++    // Rotation/refresh of a cloud credential is not consent to migrate an
++    // existing local agent to the vendor endpoint. Explicit Add still may.
++    if connection == Connection::Absent
++      || (connection == Connection::Legacy && is_remote_url(&target.url))
++    {
+       continue;
+     }
+     match install_in(env, spec.id, target) {
+@@ -2315,7 +2319,7 @@
+   }
+ 
+   #[test]
+-  fn a_legacy_local_entry_is_moved_to_the_endpoint() {
++  fn a_cloud_refresh_never_migrates_a_local_entry_without_explicit_add() {
+     assert!(is_legacy_entry(
+       SERVER_NAME,
+       &json!({ "url": "http://127.0.0.1:51080/mcp/tok" })
+@@ -2357,11 +2361,14 @@
+     assert_eq!(connection_in(&env, "vscode", Some(KEY)), Connection::Absent);
+ 
+     assert!(reinstall_in(&env, &remote()).is_empty());
++    assert_eq!(
++      entry_of(&env, "cursor")["url"],
++      json!("http://127.0.0.1:51080/mcp/tok")
++    );
++    assert_eq!(connection_in(&env, "cursor", Some(KEY)), Connection::Legacy);
++    // A deliberate user Add operation may still choose the cloud endpoint.
++    install_in(&env, "cursor", &remote()).unwrap();
+     assert_eq!(entry_of(&env, "cursor")["url"], json!(remote_mcp_url()));
+-    assert_eq!(
+-      connection_in(&env, "cursor", Some(KEY)),
+-      Connection::Connected { current: true }
+-    );
+     assert_eq!(read(&foreign), foreign_text);
+   }
+ }

@@ -1,0 +1,84 @@
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { downloadXray } from "./download-xray.mjs";
+
+const MANIFEST_DIR = dirname(fileURLToPath(import.meta.url));
+const PROFILE =
+  process.argv.includes("--release") || process.env.PROFILE === "release"
+    ? "release"
+    : "debug";
+
+function getTarget() {
+  if (process.env.TARGET) return process.env.TARGET;
+  try {
+    const output = execFileSync("rustc", ["-vV"], {
+      encoding: "utf-8",
+      windowsHide: true,
+    });
+    const match = output.match(/host:\s*(.+)/);
+    if (match) return match[1].trim();
+  } catch {}
+  return "unknown";
+}
+
+function getHostTarget() {
+  try {
+    const output = execFileSync("rustc", ["-vV"], {
+      encoding: "utf-8",
+      windowsHide: true,
+    });
+    const match = output.match(/host:\s*(.+)/);
+    if (match) return match[1].trim();
+  } catch {}
+  return "unknown";
+}
+
+const TARGET = getTarget();
+const HOST_TARGET = getHostTarget();
+const isWindows = TARGET.includes("windows");
+
+// Honor the task-local target directory; never create a duplicate build/cache.
+const targetDir = process.env.CARGO_TARGET_DIR || join(MANIFEST_DIR, "target");
+let srcDir;
+if (TARGET === HOST_TARGET || TARGET === "unknown") {
+  srcDir = join(targetDir, PROFILE === "release" ? "release" : "debug");
+} else {
+  srcDir = join(targetDir, TARGET, PROFILE === "release" ? "release" : "debug");
+}
+
+const destDir = join(MANIFEST_DIR, "binaries");
+mkdirSync(destDir, { recursive: true });
+
+function copyBinary(baseName) {
+  const binName = isWindows ? `${baseName}.exe` : baseName;
+  const source = join(srcDir, binName);
+
+  let destName = `${baseName}-${TARGET}`;
+  if (isWindows) destName += ".exe";
+  const dest = join(destDir, destName);
+
+  const buildArgs = ["build", "--bin", baseName];
+  if (PROFILE === "release") buildArgs.push("--release");
+  if (TARGET !== "unknown" && TARGET !== HOST_TARGET) {
+    buildArgs.push("--target", TARGET);
+  }
+  execFileSync("cargo", buildArgs, {
+    cwd: MANIFEST_DIR,
+    stdio: "inherit",
+    windowsHide: true,
+  });
+
+  if (!existsSync(source)) {
+    console.error(`Error: Failed to build ${baseName} binary`);
+    process.exit(1);
+  }
+  // macOS kills an executable that was overwritten in place.
+  rmSync(dest, { force: true });
+  copyFileSync(source, dest);
+  console.log(`Built and copied ${binName} to ${dest}`);
+}
+
+copyBinary("donut-proxy");
+await downloadXray(TARGET);

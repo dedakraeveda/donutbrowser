@@ -1,0 +1,180 @@
+--- a/e2e/tests/integrations.test.mjs
++++ b/e2e/tests/integrations.test.mjs
+@@ -12,6 +12,62 @@
+   writeUnpackedExtension,
+ } from "../lib/fixtures.mjs";
+ 
++test("authorized fork local MCP has an authenticated lifecycle without cloud", async () => {
++  await withApp("local-mcp-contract", async (app) => {
++    const engine = await app.invoke("get_cloak_engine_status");
++    assert.equal(engine.release, "1.33");
++    await assert.rejects(
++      app.invoke("set_cloak_binary_path", {
++        path: "D:/missing-port036-browser.exe",
++      }),
++    );
++    assert.equal(await app.invoke("get_mcp_server_status"), false);
++    const port = await app.invoke("start_mcp_server", { port: 0 });
++    assert.ok(port > 0);
++    const config = await app.invoke("get_mcp_config");
++    assert.equal(config.port, port);
++    assert.ok(config.token.length >= 32);
++    assert.equal(await app.invoke("get_mcp_server_status"), true);
++    await app.invoke("add_local_mcp_to_agent", { agentId: "cursor" });
++    const cursor = JSON.parse(
++      await readFile(
++        path.join(app.root, "home", ".cursor", "mcp.json"),
++        "utf8",
++      ),
++    );
++    const entries = Object.values(cursor.mcpServers ?? {});
++    assert.ok(
++      entries.some((entry) => entry.url === `http://127.0.0.1:${port}/mcp`),
++      "agent installer must use the local endpoint, not require cloud",
++    );
++    const denied = await jsonRequest(`http://127.0.0.1:${port}/mcp`, {
++      method: "POST",
++      token: "invalid",
++      body: {},
++    });
++    assert.equal(denied.response.status, 401);
++    const initialized = await jsonRequest(`http://127.0.0.1:${port}/mcp`, {
++      method: "POST",
++      token: config.token,
++      body: {
++        jsonrpc: "2.0",
++        id: 1,
++        method: "initialize",
++        params: {
++          protocolVersion: "2025-03-26",
++          capabilities: {},
++          clientInfo: { name: "native-e2e", version: "1" },
++        },
++      },
++    });
++    assert.equal(initialized.response.status, 200);
++    assert.ok(initialized.value.result);
++    await app.invoke("stop_mcp_server");
++    assert.equal(await app.invoke("get_mcp_server_status"), false);
++    assert.equal(await app.invoke("get_mcp_config"), null);
++  });
++});
++
+ const VLESS_URI =
+   "vless://6d6e21a1-4829-4d2b-bc7f-1b25707b61e4@127.0.0.1:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc&sid=0123456789abcdef&spx=%2F&type=tcp&headerType=none#MCP";
+ 
+@@ -22,6 +78,8 @@
+   const response = await fetch(url, {
+     method,
+     headers: {
++      // Do not reuse a socket the server closed after a bounded-body413.
++      connection: "close",
+       ...(token ? { authorization: `Bearer ${token}` } : {}),
+       ...(body === undefined ? {} : { "content-type": "application/json" }),
+       ...headers,
+@@ -1285,6 +1343,9 @@
+     },
+     {
+       extraEnv: {
++        // This test exercises upstream quota semantics explicitly, not the
++        // fork's default unlimited local capability policy.
++        DONUT_LOCAL_FEATURES: "0",
+         DONUT_E2E_REQUESTS_PER_HOUR: "2",
+         WAYFERN_TEST_TOKEN: "donut-e2e-rate-limit",
+       },
+@@ -1298,7 +1359,11 @@
+     async (app) => {
+       assert.equal(await app.invoke("cloud_get_user"), null);
+       assert.equal(await app.invoke("cloud_get_proxy_usage"), null);
+-      assert.ok(await app.invoke("cloud_get_wayfern_token"));
++      assert.equal(
++        await app.invoke("cloud_get_wayfern_token"),
++        null,
++        "local features must not fabricate a provider token without a login",
++      );
+       assert.deepEqual(await app.invoke("get_team_locks"), []);
+       assert.equal(
+         await app.invoke("get_team_lock_status", {
+@@ -1370,7 +1435,7 @@
+           // unauthenticated challenge is rate-limited, or the day the backend
+           // rewords it, with no signal that the desktop is fine.
+           refusedWith:
+-            /invalid or expired login code|failed to fetch challenge|challenge request failed/i,
++            /invalid or expired login code|failed to fetch challenge|challenge request failed|PoW challenge expired or already used/i,
+         },
+         { code: "DONUT-E2E-INVALID-CODE" },
+       );
+@@ -1393,43 +1458,16 @@
+         },
+       );
+       await assertContract(app, "cloud_refresh_wayfern_token", {
+-        // Compared against the value the harness injected, NOT matched against
+-        // a hex shape. Under the `e2e` feature this command returns
+-        // WAYFERN_TEST_TOKEN, so a /^[0-9a-f]{32,}$/ assertion only proved the
+-        // harness's own env var looks like a token: it validated the fixture
+-        // and would have passed with the command's body deleted. Equality
+-        // proves the command actually reached the token and returned it.
+-        answers: (token) =>
+-          assert.equal(
+-            String(token),
+-            process.env.WAYFERN_TEST_TOKEN,
+-            "the command must return the token it was given, not a different value",
+-          ),
++        // No injected/provider token is present in this isolated fork test.
++        // Refreshing must not manufacture a cloud credential from local access.
++        answers: (token) => assert.equal(token, null),
+       });
+ 
+       await assertContract(app, "trigger_manual_version_update", {
+-        answers: (report) => {
+-          assert.ok(
+-            Array.isArray(report),
+-            "the update run must report per browser",
+-          );
+-          // Non-empty, or the per-entry loop below asserts nothing at all: an
+-          // `[]` satisfied every check while the command did no work.
+-          assert.ok(
+-            report.length > 0,
+-            `the update run must report at least one browser, got ${JSON.stringify(report)}`,
+-          );
+-          for (const entry of report) {
+-            assert.ok(
+-              typeof entry.browser === "string" && entry.browser.length > 0,
+-              `every entry names its browser: ${JSON.stringify(entry)}`,
+-            );
+-            assert.equal(typeof entry.updated_successfully, "boolean");
+-          }
+-        },
++        refusedWith: /UPDATES_MANAGED_BY_AGENT/,
+       });
+       await assertContract(app, "clear_all_version_cache_and_refetch", {
+-        answers: (value) => assert.equal(value, null),
++        refusedWith: /UPDATES_MANAGED_BY_AGENT/,
+       });
+       await assertContract(app, "check_for_browser_updates", {
+         answers: (updates) =>
+@@ -1441,12 +1479,12 @@
+       await app.invoke("dismiss_update_notification", {
+         notificationId: "missing-e2e-notification",
+       });
+-      assert.deepEqual(
+-        await app.invoke("complete_browser_update_with_auto_update", {
++      assert.match(
++        await app.invokeError("complete_browser_update_with_auto_update", {
+           browser: "wayfern",
+           newVersion: "150.0.7871.100",
+         }),
+-        [],
++        /UPDATES_MANAGED_BY_AGENT/,
+       );
+       const prepareError = await app.invokeError(
+         "download_and_prepare_app_update",
+@@ -1466,7 +1504,7 @@
+           },
+         },
+       );
+-      assert.match(prepareError, /checksum|verif|Failed to download/i);
++      assert.match(prepareError, /UPDATES_MANAGED_BY_AGENT/);
+       const versionStatus = await app.invoke("get_version_update_status");
+       assert.ok(versionStatus && typeof versionStatus === "object");
+       assert.equal(typeof (await app.invoke("is_default_browser")), "boolean");

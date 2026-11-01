@@ -1,0 +1,18 @@
+--- a/src-tauri/tests/vpn_integration.rs
++++ b/src-tauri/tests/vpn_integration.rs
+@@ -452,11 +452,10 @@
+   } else {
+     "donut-proxy"
+   };
+-  let proxy_binary = project_root
+-    .join("src-tauri")
+-    .join("target")
+-    .join("debug")
+-    .join(proxy_binary_name);
++  let target_root = std::env::var_os("CARGO_TARGET_DIR")
++    .map(std::path::PathBuf::from)
++    .unwrap_or_else(|| project_root.join("src-tauri").join("target"));
++  let proxy_binary = target_root.join("debug").join(proxy_binary_name);
+ 
+   if !proxy_binary.exists() {
+     let build_status = tokio::process::Command::new("cargo")

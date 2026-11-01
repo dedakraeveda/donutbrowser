@@ -1,0 +1,13 @@
+--- a/src/generated/licenses.json
++++ b/src/generated/licenses.json
+@@ -1688,6 +1688,10 @@
+     "license": "Apache-2.0 OR MIT"
+   },
+   {
++    "name": "lazy_static",
++    "license": "Apache-2.0 OR MIT"
++  },
++  {
+     "name": "lebe",
+     "license": "BSD-3-Clause"
+   },

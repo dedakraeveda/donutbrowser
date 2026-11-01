@@ -1,0 +1,6 @@
+# Reviewed overlays pin exact bytes, including original line endings.
+# Never let core.autocrlf invalidate the before/after SHA-256 manifests.
+distribution/port036-wayfern/overlay/** -text whitespace=cr-at-eol
+distribution/port036-wayfern/patches/** -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof
+# Source snapshot preserves the tested upstream helper's trailing newline.
+distribution/port036-wayfern/overlay/scripts/sync-test-harness.mjs whitespace=cr-at-eol,-blank-at-eof

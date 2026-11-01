@@ -1,0 +1,818 @@
+--- a/src-tauri/src/mcp_server.rs
++++ b/src-tauri/src/mcp_server.rs
+@@ -434,7 +434,8 @@
+ /// That token expires, and a launch while the token service did not answer
+ /// gets none, so only a new launch gives the browser a token that works.
+ pub(crate) async fn stale_plan_token_refusal(profile_id: Option<&str>) -> Option<String> {
+-  if CLOUD_AUTH.wayfern_device_refusal().is_some() || !CLOUD_AUTH.can_use_browser_automation().await
++  if CLOUD_AUTH.wayfern_device_refusal().is_some()
++    || !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await
+   {
+     return None;
+   }
+@@ -515,6 +516,7 @@
+ const KEYSTROKE_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+ 
+ struct McpSession {
++  local_transport: bool,
+   initialized: bool,
+   /// When this session was last USED, which is what the cap evicts by.
+   ///
+@@ -585,6 +587,7 @@
+ /// filesystem or export stored secrets are refused to all of them.
+ #[derive(Clone, Copy)]
+ pub(crate) struct McpCaller<'a> {
++  local_transport: bool,
+   /// The session id echoed back by the caller, when it opened one at all.
+   session: Option<&'a str>,
+   /// The toolsets the caller connected with; `None` is every tool.
+@@ -1143,7 +1146,7 @@
+   /// The engine is read from the profile HERE, at the point of use, never
+   /// cached: a profile updated to 152 gets the native path on its next call.
+   pub(crate) fn new(profile: BrowserProfile, target: CdpTarget) -> Self {
+-    let engine = Engine::for_version(&profile.version);
++    let engine = Engine::for_browser(&profile.browser, &profile.version);
+     Self {
+       profile,
+       target,
+@@ -4429,7 +4432,7 @@
+   }
+ 
+   /// Gate an MCP tool on a capability the caller already resolved (e.g.
+-  /// `CLOUD_AUTH.can_use_browser_automation().await`). Logs the rejected gate
++  /// `crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await`). Logs the rejected gate
+   /// with enough state for support to diagnose, without leaking secrets.
+   async fn require_capability(feature: &str, allowed: bool) -> Result<(), McpError> {
+     if !allowed {
+@@ -4466,6 +4469,19 @@
+   /// Forget a session, on the server AND in the pages it left snapshots in.
+   /// Idempotent; an unknown id is not an error, because a caller tearing down a
+   /// session it already lost has nothing to fix.
++  pub(crate) async fn end_local_session(&self, session_id: &str) {
++    let local = self
++      .inner
++      .lock()
++      .await
++      .sessions
++      .get(session_id)
++      .is_some_and(|s| s.local_transport);
++    if local {
++      self.end_session(session_id).await;
++    }
++  }
++
+   pub(crate) async fn end_session(&self, session_id: &str) {
+     let cached_pages = {
+       let mut inner = self.inner.lock().await;
+@@ -4580,6 +4596,28 @@
+     body: &[u8],
+     toolsets: Option<&str>,
+   ) -> McpOutcome {
++    self
++      .handle_message_transport(session_id, body, toolsets, false)
++      .await
++  }
++
++  pub(crate) async fn handle_local_message(
++    &self,
++    session_id: Option<&str>,
++    body: &[u8],
++  ) -> McpOutcome {
++    self
++      .handle_message_transport(session_id, body, None, true)
++      .await
++  }
++
++  async fn handle_message_transport(
++    &self,
++    session_id: Option<&str>,
++    body: &[u8],
++    toolsets: Option<&str>,
++    local_transport: bool,
++  ) -> McpOutcome {
+     let toolsets = crate::mcp_toolsets::parse(toolsets);
+     if body.len() > Self::MAX_MESSAGE_BYTES {
+       return McpOutcome::BadRequest;
+@@ -4590,8 +4628,24 @@
+       Err(_) => return McpOutcome::BadRequest,
+     };
+ 
++    // A UUID from one transport never authorizes use from the other.
++    if request.method != "initialize" && request.id.is_some() {
++      if let Some(id) = session_id {
++        let inner = self.inner.lock().await;
++        if !inner
++          .sessions
++          .get(id)
++          .is_some_and(|session| session.local_transport == local_transport)
++        {
++          return McpOutcome::UnknownSession;
++        }
++      }
++    }
+     if request.method == "initialize" {
+-      return match self.handle_initialize(request, toolsets.as_ref()).await {
++      return match self
++        .handle_initialize(request, toolsets.as_ref(), local_transport)
++        .await
++      {
+         Ok((new_session_id, (id, result))) => McpOutcome::Body {
+           body: serde_json::to_value(McpResponse {
+             jsonrpc: "2.0".to_string(),
+@@ -4622,7 +4676,9 @@
+         if let Some(sid) = session_id {
+           let mut inner = self.inner.lock().await;
+           if let Some(session) = inner.sessions.get_mut(sid) {
+-            session.initialized = true;
++            if session.local_transport == local_transport {
++              session.initialized = true;
++            }
+           }
+         }
+       }
+@@ -4668,6 +4724,7 @@
+         McpCaller {
+           session: session_id,
+           toolsets: toolsets.as_ref(),
++          local_transport,
+         },
+         request,
+       )
+@@ -4898,7 +4955,7 @@
+             },
+             "browser": {
+               "type": "string",
+-              "enum": ["wayfern"],
++              "enum": ["wayfern", "cloak"],
+               "description": "Browser engine to use"
+             },
+             "proxy_id": {
+@@ -7020,6 +7077,7 @@
+     &self,
+     request: McpRequest,
+     toolsets: Option<&crate::mcp_toolsets::Selection>,
++    local_transport: bool,
+   ) -> Result<(String, (serde_json::Value, serde_json::Value)), (serde_json::Value, McpError)> {
+     let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+ 
+@@ -7064,6 +7122,7 @@
+       inner.sessions.insert(
+         session_id.clone(),
+         McpSession {
++          local_transport,
+           initialized: false,
+           last_used: std::time::Instant::now(),
+           cached_pages: HashSet::new(),
+@@ -7101,7 +7160,7 @@
+     }
+ 
+     let mut instructions = INITIALIZE_INSTRUCTIONS.to_string();
+-    if !CLOUD_AUTH.can_use_browser_automation().await {
++    if !crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await {
+       instructions.push_str(PLAN_WITHOUT_AUTOMATION);
+     }
+     if let Some(selection) = toolsets {
+@@ -7189,6 +7248,11 @@
+         let output_schema = crate::mcp_views::output_schema_for(&tool.name);
+         let annotations = tool_annotations(&tool.name);
+         let mut value = serde_json::to_value(tool).unwrap_or_default();
++        if value["inputSchema"]["properties"].get("profile_id").is_some() {
++          value["inputSchema"]["properties"]["page_id"] = serde_json::json!({
++            "type": "string", "description": "Exact local page ID from list_tabs; stale IDs fail closed, never switch to another tab."
++          });
++        }
+         if let Some(schema) = output_schema {
+           value["outputSchema"] = schema;
+         }
+@@ -7236,7 +7300,9 @@
+     // Refused here, at the one place every tool call passes, rather than in
+     // each handler: a new path-taking tool added later inherits the rule
+     // instead of having to remember it.
+-    if LOCAL_PATH_TOOLS.contains(&tool_name) || SECRET_EXPORT_TOOLS.contains(&tool_name) {
++    if (!caller.local_transport && LOCAL_PATH_TOOLS.contains(&tool_name))
++      || SECRET_EXPORT_TOOLS.contains(&tool_name)
++    {
+       log::warn!("MCP tool refused: local paths or secrets tool={tool_name}");
+       return Err(McpError {
+         code: -32000,
+@@ -7269,10 +7335,15 @@
+       return Err(error);
+     }
+ 
+-    let mut result = self
+-      .dispatch_tool_call(caller, tool_name, &arguments)
+-      .await
+-      .map_err(|error| explain_engine_refusal(error, CLOUD_AUTH.wayfern_device_refusal()));
++    let mut result = crate::cdp_target::with_exact_page(
++      arguments
++        .get("profile_id")
++        .and_then(serde_json::Value::as_str),
++      arguments.get("page_id").and_then(serde_json::Value::as_str),
++      self.dispatch_tool_call(caller, tool_name, &arguments),
++    )
++    .await
++    .map_err(|error| explain_engine_refusal(error, CLOUD_AUTH.wayfern_device_refusal()));
+     if let Err(error) = &mut result {
+       if error.message.contains("requires a paid Donut Browser plan") {
+         let profile = arguments.get("profile_id").and_then(|v| v.as_str());
+@@ -7337,7 +7408,7 @@
+       "run_profile" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_run_profile(arguments).await
+@@ -7345,7 +7416,7 @@
+       "kill_profile" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_kill_profile(arguments).await
+@@ -7353,7 +7424,7 @@
+       "batch_run_profiles" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_batch_run_profiles(arguments).await
+@@ -7361,7 +7432,7 @@
+       "batch_stop_profiles" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_batch_stop_profiles(arguments).await
+@@ -7460,7 +7531,7 @@
+       "update_profile_fingerprint" => {
+         Self::require_capability(
+           "Fingerprint editing",
+-          CLOUD_AUTH.can_use_cross_os_fingerprints().await,
++          crate::entitlements::EntitlementsPolicy::can_use_cross_os_fingerprints().await,
+         )
+         .await?;
+         self.handle_update_profile_fingerprint(arguments).await
+@@ -7498,7 +7569,7 @@
+       "start_sync_session" => {
+         Self::require_capability(
+           "Synchronizer",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_start_sync_session(arguments).await
+@@ -7510,7 +7581,7 @@
+       "navigate" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_navigate(arguments).await
+@@ -7518,7 +7589,7 @@
+       "screenshot" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_screenshot(arguments).await
+@@ -7526,7 +7597,7 @@
+       "run_actions" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_run_actions(caller, arguments).await
+@@ -7534,7 +7605,7 @@
+       "list_tabs" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_list_tabs(arguments).await
+@@ -7542,7 +7613,7 @@
+       "open_tab" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_open_tab(arguments).await
+@@ -7550,7 +7621,7 @@
+       "switch_tab" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_switch_tab(arguments).await
+@@ -7558,7 +7629,7 @@
+       "close_tab" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_close_tab(arguments).await
+@@ -7566,7 +7637,7 @@
+       "scroll" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_scroll(arguments).await
+@@ -7574,7 +7645,7 @@
+       "press_key" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_press_key(arguments).await
+@@ -7582,7 +7653,7 @@
+       "go_back" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_go_back(arguments).await
+@@ -7590,7 +7661,7 @@
+       "wait_for" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_wait_for(arguments).await
+@@ -7598,7 +7669,7 @@
+       "evaluate_javascript" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_evaluate_javascript(arguments).await
+@@ -7606,7 +7677,7 @@
+       "click_element" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_click_element(arguments).await
+@@ -7614,7 +7685,7 @@
+       "type_text" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_type_text(arguments).await
+@@ -7622,7 +7693,7 @@
+       "get_page_content" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_get_page_content(arguments).await
+@@ -7630,7 +7701,7 @@
+       "get_page_info" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_get_page_info(arguments).await
+@@ -7638,7 +7709,7 @@
+       "get_interactive_elements" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self
+@@ -7648,7 +7719,7 @@
+       "click_by_index" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_click_by_index(caller, arguments).await
+@@ -7656,7 +7727,7 @@
+       "type_by_index" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_type_by_index(caller, arguments).await
+@@ -7667,7 +7738,7 @@
+       "perceive_page" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_perceive_page(arguments).await
+@@ -7675,7 +7746,7 @@
+       "resolve_locator" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_resolve_locator(arguments).await
+@@ -7683,7 +7754,7 @@
+       "click_locator" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_click_locator(arguments).await
+@@ -7691,7 +7762,7 @@
+       "press_and_hold" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_press_and_hold(caller, arguments).await
+@@ -7699,7 +7770,7 @@
+       "type_locator" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_type_locator(arguments).await
+@@ -7707,7 +7778,7 @@
+       "select_option" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_select_option(caller, arguments).await
+@@ -7715,7 +7786,7 @@
+       "file_upload" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_file_upload(caller, arguments).await
+@@ -7723,7 +7794,7 @@
+       "start_network_capture" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_start_network_capture(arguments).await
+@@ -7733,7 +7804,7 @@
+       "list_network_requests" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         Self::handle_list_network_requests(arguments)
+@@ -7741,7 +7812,7 @@
+       "get_network_request" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         Self::handle_get_network_request(arguments)
+@@ -7749,7 +7820,7 @@
+       "extract_structured" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_extract_structured(arguments).await
+@@ -7757,7 +7828,7 @@
+       "pick_element" => {
+         Self::require_capability(
+           "Browser automation",
+-          CLOUD_AUTH.can_use_browser_automation().await,
++          crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+         )
+         .await?;
+         self.handle_pick_element(arguments).await
+@@ -7864,10 +7935,10 @@
+       })?;
+ 
+     // Check if it's a Wayfern profile
+-    if profile.browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+       return Err(McpError {
+         code: -32000,
+-        message: "MCP only supports Wayfern profiles".to_string(),
++        message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+         data: None,
+       });
+     }
+@@ -7885,7 +7956,7 @@
+     // Launching profiles programmatically requires the automation capability.
+     Self::require_capability(
+       "Launching a profile",
+-      CLOUD_AUTH.can_use_browser_automation().await,
++      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+     )
+     .await?;
+ 
+@@ -7926,10 +7997,10 @@
+       })?;
+ 
+     // Check if it's a Wayfern profile
+-    if profile.browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+       return Err(McpError {
+         code: -32000,
+-        message: "MCP only supports Wayfern profiles".to_string(),
++        message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+         data: None,
+       });
+     }
+@@ -8019,7 +8090,7 @@
+     // Stopping profiles programmatically requires the automation capability.
+     Self::require_capability(
+       "Killing a profile",
+-      CLOUD_AUTH.can_use_browser_automation().await,
++      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+     )
+     .await?;
+ 
+@@ -8051,10 +8122,10 @@
+       })?;
+ 
+     // Check if it's a Wayfern profile
+-    if profile.browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+       return Err(McpError {
+         code: -32000,
+-        message: "MCP only supports Wayfern profiles".to_string(),
++        message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+         data: None,
+       });
+     }
+@@ -8108,7 +8179,7 @@
+   ) -> Result<serde_json::Value, McpError> {
+     Self::require_capability(
+       "Batch launching profiles",
+-      CLOUD_AUTH.can_use_browser_automation().await,
++      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+     )
+     .await?;
+ 
+@@ -8165,7 +8236,7 @@
+         lines.push(format!("{profile_id}: not found"));
+         continue;
+       };
+-      if profile.browser != "wayfern" {
++      if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+         lines.push(format!(
+           "{profile_id}: unsupported browser (MCP supports Wayfern)"
+         ));
+@@ -8205,7 +8276,7 @@
+   ) -> Result<serde_json::Value, McpError> {
+     Self::require_capability(
+       "Batch stopping profiles",
+-      CLOUD_AUTH.can_use_browser_automation().await,
++      crate::entitlements::EntitlementsPolicy::can_use_browser_automation().await,
+     )
+     .await?;
+ 
+@@ -8293,10 +8364,10 @@
+         data: None,
+       })?;
+ 
+-    if browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(browser) {
+       return Err(McpError {
+         code: -32602,
+-        message: "browser must be 'wayfern'".to_string(),
++        message: "browser must be 'wayfern' or 'cloak'".to_string(),
+         data: None,
+       });
+     }
+@@ -8799,10 +8870,10 @@
+       })?;
+ 
+     // Check if it's a Wayfern profile
+-    if profile.browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+       return Err(McpError {
+         code: -32000,
+-        message: "MCP only supports Wayfern profiles".to_string(),
++        message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+         data: None,
+       });
+     }
+@@ -10185,7 +10256,7 @@
+       _ => {
+         return Err(McpError {
+           code: -32000,
+-          message: "MCP only supports Wayfern profiles".to_string(),
++          message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+           data: None,
+         })
+       }
+@@ -10198,7 +10269,7 @@
+     &self,
+     arguments: &serde_json::Value,
+   ) -> Result<serde_json::Value, McpError> {
+-    if !CLOUD_AUTH.can_use_cross_os_fingerprints().await {
++    if !crate::entitlements::EntitlementsPolicy::can_use_cross_os_fingerprints().await {
+       return Err(McpError {
+         code: -32000,
+         message: "Fingerprint editing requires a plan that includes it".to_string(),
+@@ -10319,7 +10390,7 @@
+       _ => {
+         return Err(McpError {
+           code: -32000,
+-          message: "MCP only supports Wayfern profiles".to_string(),
++          message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+           data: None,
+         })
+       }
+@@ -10969,10 +11040,10 @@
+         data: None,
+       })?;
+ 
+-    if profile.browser != "wayfern" {
++    if !crate::browser::BrowserType::supports_local_automation(&profile.browser) {
+       return Err(McpError {
+         code: -32000,
+-        message: "MCP only supports Wayfern profiles".to_string(),
++        message: "MCP supports Wayfern and CBrowser profiles".to_string(),
+         data: None,
+       });
+     }
+@@ -11769,7 +11840,7 @@
+     // browser types through Vellum, which paces the keys itself, so the plan
+     // below is only built for the fallback engine.
+     let profile = self.get_wayfern_profile(profile_id)?;
+-    let engine = Engine::for_version(&profile.version);
++    let engine = Engine::for_browser(&profile.browser, &profile.version);
+     let humanized = engine.is_wayfern() && !instant;
+ 
+     // PLANNED FIRST, before anything touches the page. The planner can refuse
+@@ -12163,7 +12234,7 @@
+ 
+     // Engine first, then budgets, then the page: see handle_type_text.
+     let profile = self.get_wayfern_profile(profile_id)?;
+-    let engine = Engine::for_version(&profile.version);
++    let engine = Engine::for_browser(&profile.browser, &profile.version);
+     let humanized = engine.is_wayfern() && !instant;
+ 
+     // PLANNED FIRST, before anything touches the page. The planner can refuse
+@@ -14614,10 +14685,12 @@
+     let sessionless = McpCaller {
+       session: None,
+       toolsets: None,
++      local_transport: false,
+     };
+     let with_session = McpCaller {
+       session: Some("11111111-2222-3333-4444-555555555555"),
+       toolsets: None,
++      local_transport: false,
+     };
+     // Deliberately complete arguments: the refusal must be about the missing
+     // session, not about anything the caller forgot to send.
+@@ -16831,7 +16904,7 @@
+         .unwrap_or_else(|| panic!("{handler} must exist"));
+       let body = &rest[..rest.find("\n  async fn ").unwrap_or(rest.len())];
+       let engine = body
+-        .find("Engine::for_version(&profile.version)")
++        .find("Engine::for_browser(&profile.browser, &profile.version)")
+         .unwrap_or_else(|| panic!("{handler} must read the engine off the profile"));
+       let budget = body
+         .find("vellum_typing_budget(")
+@@ -17287,6 +17360,7 @@
+     let caller = McpCaller {
+       session: Some("s"),
+       toolsets: None,
++      local_transport: false,
+     };
+     for arguments in [
+       serde_json::json!({}),
+@@ -17372,3 +17446,69 @@
+     );
+   }
+ }
++
++#[cfg(test)]
++mod authorized_transport_tests {
++  use super::*;
++  #[tokio::test]
++  async fn local_and_cloud_sessions_cannot_cross_or_teardown_each_other() {
++    let server = McpServer::new();
++    server.mark_engine_ready_for_tests();
++    let init = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
++    let local = match server.handle_local_message(None, init).await {
++      McpOutcome::Body {
++        new_session_id: Some(id),
++        ..
++      } => id,
++      _ => panic!("Local initialize refused"),
++    };
++    let cloud = match server.handle_message(None, init).await {
++      McpOutcome::Body {
++        new_session_id: Some(id),
++        ..
++      } => id,
++      _ => panic!("Cloud initialize refused"),
++    };
++    let ping = br#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
++    assert!(matches!(
++      server.handle_local_message(Some(&cloud), ping).await,
++      McpOutcome::UnknownSession
++    ));
++    assert!(matches!(
++      server.handle_message(Some(&local), ping).await,
++      McpOutcome::UnknownSession
++    ));
++    let notification = br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
++    assert!(matches!(
++      server
++        .handle_local_message(Some(&cloud), notification)
++        .await,
++      McpOutcome::Accepted
++    ));
++    assert!(
++      !server
++        .inner
++        .lock()
++        .await
++        .sessions
++        .get(&cloud)
++        .unwrap()
++        .initialized
++    );
++    server.end_local_session(&cloud).await;
++    assert!(server.inner.lock().await.sessions.contains_key(&cloud));
++    server.end_local_session(&local).await;
++    assert!(!server.inner.lock().await.sessions.contains_key(&local));
++  }
++  #[test]
++  fn cbrowser155_never_uses_wayfern_private_protocol_domains() {
++    assert_eq!(
++      Engine::for_browser("cloak", "155.0.8059.39.1"),
++      Engine::Fallback
++    );
++    assert_eq!(
++      Engine::for_browser("wayfern", "155.0.8059.39.1"),
++      Engine::Wayfern
++    );
++  }
++}

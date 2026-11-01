@@ -1,0 +1,13 @@
+--- a/src-tauri/src/automation_rate_limiter.rs
++++ b/src-tauri/src/automation_rate_limiter.rs
+@@ -87,6 +87,10 @@
+   LazyLock::new(|| Mutex::new(AutomationRateLimiter::default()));
+ 
+ pub async fn check_automation_rate_limit() -> RateLimitOutcome {
++  if crate::entitlements::EntitlementsPolicy::local_features_enabled() {
++    return RateLimitOutcome::Unlimited;
++  }
++
+   let Some((identity, requests_per_hour)) = CLOUD_AUTH.automation_rate_limit().await else {
+     return RateLimitOutcome::Unlimited;
+   };

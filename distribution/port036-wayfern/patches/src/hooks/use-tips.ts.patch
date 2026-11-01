@@ -1,0 +1,26 @@
+--- a/src/hooks/use-tips.ts
++++ b/src/hooks/use-tips.ts
+@@ -334,7 +334,13 @@
+   const observedRef = useRef<string | null>(null);
+   useEffect(() => {
+     if (!cloudUser) return;
+-    const paid = entitlements.active;
++    // Local feature access is not a purchased cloud plan and must never
++    // open a misleading "Welcome to Free" subscription dialog.
++    const paid =
++      cloudUser.entitlements?.active ??
++      (cloudUser.plan !== "free" &&
++        (cloudUser.subscriptionStatus === "active" ||
++          cloudUser.planPeriod === "lifetime"));
+     const key = `${cloudUser.id}:${paid ? "paid" : "free"}`;
+     if (observedRef.current === key) return;
+     observedRef.current = key;
+@@ -353,7 +359,7 @@
+       .catch((error: unknown) => {
+         console.error("Failed to record the cloud plan:", error);
+       });
+-  }, [cloudUser, entitlements.active, loggedInAt]);
++  }, [cloudUser, loggedInAt]);
+ 
+   // The welcome waits for a quiet moment: the app settled and no tips open.
+   useEffect(() => {

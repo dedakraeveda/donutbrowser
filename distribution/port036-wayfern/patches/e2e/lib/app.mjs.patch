@@ -1,0 +1,40 @@
+--- a/e2e/lib/app.mjs
++++ b/e2e/lib/app.mjs
+@@ -43,6 +43,7 @@
+     XDG_DATA_HOME: path.join(root, "xdg", "data"),
+     APPDATA: path.join(root, "windows", "roaming"),
+     LOCALAPPDATA: path.join(root, "windows", "local"),
++    WEBVIEW2_USER_DATA_FOLDER: path.join(root, "webview"),
+     LANG: "en_US.UTF-8",
+     LC_ALL: "en_US.UTF-8",
+     NO_PROXY: "127.0.0.1,localhost",
+@@ -296,7 +297,7 @@
+     await this.waitFor(
+       async () => {
+         const ready = await this.execute(
+-          "return document.readyState === 'complete' && Boolean(window.__TAURI_INTERNALS__);",
++          "return document.readyState === 'complete' && Boolean(window.__TAURI_INTERNALS__) && Boolean(document.querySelector('button')) && document.body.innerText.length > 20;",
+         );
+         return ready === true;
+       },
+@@ -598,7 +599,19 @@
+       ...(alt ? ["\uE00A"] : []),
+       ...(shift ? ["\uE008"] : []),
+     ];
+-    const value = key === "Escape" ? "\uE00C" : key;
++    const namedKeys = {
++      Escape: "\uE00C",
++      ArrowLeft: "\uE012",
++      ArrowRight: "\uE014",
++      ArrowUp: "\uE013",
++      ArrowDown: "\uE015",
++      Enter: "\uE007",
++      Tab: "\uE004",
++      Backspace: "\uE003",
++      Home: "\uE011",
++      End: "\uE010",
++    };
++    const value = namedKeys[key] ?? key;
+     const actions = [
+       ...modifiers.map((modifier) => ({ type: "keyDown", value: modifier })),
+       { type: "keyDown", value },

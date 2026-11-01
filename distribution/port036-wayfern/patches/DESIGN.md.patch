@@ -1,0 +1,15 @@
+--- a/DESIGN.md
++++ b/DESIGN.md
+@@ -0,0 +1,12 @@
++# Authorized0.36 candidate — preserve the upstream design system
++
++This is a compatibility port, not a visual redesign. Use upstream Geist,
++existing semantic CSS/theme variables in src/app/globals.css, and the existing
++Label/Select/Input/dialog components, sizes, focus states and motion tokens.
++The only new create-form row is the translated browser-engine Select. CBrowser
++is available only after native capability discovery; unavailable runtime disables
++that option. Keep new upstream forms, templates and accessibility behavior.
++
++No new palette, raw colors, font sizes or animation conventions were introduced.
++Native UI screenshot/accessibility checks and independent visual review remain
++pending; TypeScript compilation alone is not visual verification.
