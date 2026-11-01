@@ -835,7 +835,7 @@
     {
       "path": "src-tauri/src/downloaded_browsers_registry.rs",
       "before": "276310e352bc6aac80a7ac3ce077c0372472fc100d9f5eb71e1eb3e057ec419d",
-      "after": "55694f5c0b18e4410a727b997965bb664eb0310f7504d0d627c61760476e18ec"
+      "after": "db708d3bbfbe2f30b0cf022117797a379a0e6c4bb00c54e848e077ef8cd102fc"
     },
     {
       "path": "src-tauri/src/downloader.rs",

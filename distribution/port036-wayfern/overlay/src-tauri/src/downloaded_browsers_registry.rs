@@ -1071,6 +1071,11 @@ impl DownloadedBrowsersRegistry {
   pub fn cleanup_unused_binaries(
     &self,
   ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    // Pruning is an executable-browser update too. In the authorized fork,
+    // an unused engine remains available for explicit selection and rollback.
+    if crate::entitlements::EntitlementsPolicy::manual_browser_updates_only() {
+      return Ok(Vec::new());
+    }
     // Load current profiles using injected ProfileManager
     let profiles = self
       .profile_manager
@@ -1326,6 +1331,31 @@ mod tests {
     assert!(cleaned.contains(&first_entry), "{cleaned:?}");
     assert!(!registry.is_browser_registered("wayfern", first));
     assert!(registry.is_browser_registered("wayfern", rebuilt));
+  }
+
+  #[test]
+  fn manual_browser_updates_do_not_prune_downloaded_payloads() {
+    assert!(crate::entitlements::EntitlementsPolicy::manual_browser_updates_only());
+    let root = tempfile::tempdir().unwrap();
+    let registry = DownloadedBrowsersRegistry::new();
+    for version in ["149.0.0.1", "155.0.8059.79"] {
+      let payload = root.path().join(version);
+      std::fs::create_dir(&payload).unwrap();
+      std::fs::write(payload.join("engine-sentinel"), b"retain unused engine").unwrap();
+      registry.add_browser(DownloadedBrowserInfo {
+        browser: "wayfern".into(),
+        version: version.into(),
+        file_path: payload,
+      });
+    }
+    assert!(registry.cleanup_unused_binaries().unwrap().is_empty());
+    for version in ["149.0.0.1", "155.0.8059.79"] {
+      assert!(registry.is_browser_registered("wayfern", version));
+      assert_eq!(
+        std::fs::read(root.path().join(version).join("engine-sentinel")).unwrap(),
+        b"retain unused engine"
+      );
+    }
   }
 
   #[test]
