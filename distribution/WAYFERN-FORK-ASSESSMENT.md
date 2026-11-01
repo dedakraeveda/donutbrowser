@@ -1,7 +1,7 @@
 # Wayfern155 — authorized adaptation and verification
 
 Status: WINDOWS_NATIVE_DIAGNOSTIC_VERIFIED; MANAGER_BUILDS_VERIFIED_3_TARGETS;
-FULL_MANAGER_RUNTIME_INTEGRATION_PENDING.
+WINDOWS_MANAGER_SYNTHETIC_RUNTIME_SMOKE_PASS; NOT_FULL_RELEASE.
 Original input is immutable. The local native candidate is binary-modified,
 not rebuilt from Chromium C++ sources and not eligible for production release.
 
@@ -23,8 +23,8 @@ not rebuilt from Chromium C++ sources and not eligible for production release.
 - Unmodified Rust `wayfern_local_policy.rs` compiled in a bounded isolated
   module harness: **5 PASS**, including matching the actual candidate, missing
   marker stock behavior, false hash claims and oversized/invalid markers.
-  Profile lookup is a TEST-ONLY stub: this does NOT verify full Donut compile,
-  manager lifecycle, cloud-call omission, REST/MCP or native app E2E.
+  Its profile lookup is a TEST-ONLY stub. Subsequent full Windows compilation
+  and real downloaded-manager smoke below separately verified integration.
 - Own policy is offline/local, hash-gated. No signed licensing server exists.
   Vendor-hosted services are not granted or impersonated.
 - Published resource hardening: `151367f4be09aea6d5056524533659dda0e807d7`.
@@ -47,22 +47,55 @@ not rebuilt from Chromium C++ sources and not eligible for production release.
   `6dbb608ba6964fa899a179febd66b4ff0a1b9736625469586de61daaefde109d`.
   All nine members verified, PE headers confirm x64; runtime extracted to
   D:/projects/temp/wayfern-fork-audit-20261102/ci-41461864388-windows/runtime/.
-  Fresh isolated D: launch reached native WebDriver session, Donut0.36 startup
-  and local MCP listener; test was then STOPPED by disk-resource guard before
-  form/MCP/E2E postconditions. C: fell3.32 to2.10GiB; attribution is not proven.
-  Task processes were confirmed absent after termination. This is NOT runtime
-  smoke PASS and not a Wayfern manager lifecycle test. No more local runs until
-  system-disk headroom is restored under a separately authorized operation.
+  First isolated D: launch was STOPPED by disk-resource guard before smoke
+  postconditions (C:3.32 to2.10GiB; attribution not proven). Owner Telegram9675
+  explicitly overrode that guard for testing. Subsequent CBrowser native smoke
+  PASS: manager,115 MCP tools,2 concurrent profiles, REST/CDP and native MCP
+  form, wrong-token/Origin/stale-page rejection and manual-update guards.
+
+  Real Wayfern testing found a remaining direct CLOUD_AUTH OS gate in MCP
+  `update_profile_fingerprint`. Fixed in commit294c05a by resolving the actual
+  profile first and checking `wayfern_local_policy::for_profile`; stock keeps
+  the vendor gate and invalid opt-in fails closed. Refreshed overlay+patch+hash.
+  New Windows CI run41480988051 SUCCESS, archive SHA256:
+  `f16b1399f967dd40e9ccc7e223f861b54b0bbf64721ae7879f3166c789f32583`.
+  All9 member hashes and PE64 architecture verified, runtime retained under
+  D:/projects/temp/wayfern-fork-audit-20261102/ci-41480988051-windows/.
+
+  Fresh downloaded-manager Wayfern smoke **PASS** at
+  D:/projects/temp/wayfern-fork-audit-20261102/ci-windows-wayfern-macos-fixed-02/RESULT.json:
+  manager-generated Mac identity, actual MacIntel browser state on Windows,
+  2 concurrent profiles, REST/CDP and native MCP form postconditions,
+  native Wayfern.capturePagePerception11 nodes, fingerprint retrieval,
+  stop/relaunch with UA/platform/cores/memory/language/timezone/webdriver fields
+  stable, stock engine vendor subscription gate retained, tampered EXE/DLL
+  marker fixture refused, token/Origin/stale-page/update guards PASS.
+  During this run51 child chrome processes were observed (NOT51 profiles):
+  no wayfern-token argv flag or WAYFERN_TOKEN/CLOAKBROWSER_LICENSE_KEY env key
+  observed. This does NOT prove absence of network traffic or tokens in every
+  transport. No egress instrumentation claim. An earlier host-Windows Wayfern
+  manager smoke also passed.
+
+  Tests use fresh synthetic D: state and a test-only local engine junction and
+  downloaded-browser registry fixture. Official isolated consent runs with the
+  original C: marker write-locked; hash/mtime unchanged. No copied/fabricated
+  consent. One intermediate stock negative test failed due to wrong unpacked
+  fixture path; corrected and the entire final suite rerun successfully.
+  Task manager/engine processes confirmed absent; all2382 actual engine files
+  reverified after tests. No personal application update or user profiles used.
+  This verifies the listed Windows synthetic smoke, NOT the full upstream
+  E2E suite, Linux/macOS GUI, all vendor services or a production transfer kit.
   macOS ARM64 received no hosted runner on BOTH attempts (GitHub capacity
   warning); no ARM64 success or installed-app update claimed.
 - Installed authorized.8 and personal browser profiles were not replaced.
   IMPORTANT historical exception: the first official terms command updated
   the existing C: Wayfern consent marker timestamp; exact previous timestamp
   restoration is not proven. Later isolated acceptance protected that marker.
-- Current free space after CI download/runtime attempt: C: about2.10GiB,
-  D:26.29GiB. Heavy local work is stopped; downloaded artifacts, extracted
-  runtime and isolated test state/logs are on D:. Existing user data is not
-  authorized for cleanup. Installed personal Donut and private backup retained.
+- Current free space after owner-approved tests: C: about1.95GiB,
+  D:25.65GiB. Final Wayfern run C:1.95 to1.95GiB, D:25.72 to25.65GiB;
+  baseline before this continuation C:2.10GiB. No heavy local build or install.
+  Downloads, extracted binaries and synthetic test state/logs remain on D:.
+  Existing user data is not authorized for cleanup. Personal Donut retained.
 
 The sections below retain the initial investigation context; statements about
 no launch/modification there describe that earlier checkpoint only.
@@ -209,5 +242,8 @@ See the current verified checkpoint above. The original input, native candidate,
 source reconstruction and diagnostics remain on D:. No personal installation
 was deployed or migrated. Rollback for local source changes is a reviewed
 file-level reversal, preserving unrelated dirty work; do not reset the repo.
-Published history is not rewritten. Production release remains blocked on full
-manager compile/E2E and native platform build verification.
+Published history is not rewritten. Windows full compilation and the listed
+synthetic manager smoke passed; production release still needs complete kit
+assembly/verification, remaining platform/runtime checks and licensing/notices
+review. Offline policy CLI's managerIntegrationVerified=false denotes that its
+file-hash operation itself cannot attest to the separate runtime evidence.
