@@ -7,12 +7,16 @@ on:
         description: Build only Windows (independent of a full matrix run)
         type: boolean
         default: false
+      linux_only:
+        description: Build only Linux x64
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: port036-native-${{ github.ref }}-${{ inputs.windows_only && 'windows' || 'all' }}
+  group: port036-native-${{ github.ref }}-${{ inputs.windows_only && 'windows' || inputs.linux_only && 'linux' || 'all' }}
   cancel-in-progress: false
 
 jobs:
@@ -20,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.windows_only && '[{"runner":"windows-2025","arch":"windows-x64"}]' || '[{"runner":"windows-2025","arch":"windows-x64"},{"runner":"ubuntu-24.04","arch":"linux-x64"},{"runner":"macos-15","arch":"macos-arm64"},{"runner":"macos-15-intel","arch":"macos-x64"}]') }}
+        include: ${{ fromJSON(inputs.windows_only && '[{"runner":"windows-2025","arch":"windows-x64"}]' || inputs.linux_only && '[{"runner":"ubuntu-24.04","arch":"linux-x64"}]' || '[{"runner":"windows-2025","arch":"windows-x64"},{"runner":"ubuntu-24.04","arch":"linux-x64"},{"runner":"macos-15","arch":"macos-arm64"},{"runner":"macos-15-intel","arch":"macos-x64"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:

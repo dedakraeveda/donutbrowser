@@ -955,7 +955,7 @@
     {
       "path": "src-tauri/src/wayfern_local_policy.rs",
       "before": null,
-      "after": "a61cde3dd002e1dc38bb57dc017ba90398e8e55fba3770846d41c1bbdd276b8e"
+      "after": "3afd32213f61ed26833d5ff96e68e635b7013e20d23e7ecb57d7e86a28ba6459"
     },
     {
       "path": "src-tauri/src/wayfern_manager.rs",

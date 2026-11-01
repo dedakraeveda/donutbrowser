@@ -9,6 +9,7 @@ use std::path::Path;
 
 const EXE_SHA256: &str = "1b49fdb3b79de9427b247e0c6bb41a8668e5f7b75ba0da39e6d5518cb2cb25e3";
 const DLL_SHA256: &str = "54c30c2a9a73fbc48bb379369c48c1f1f04dc53f3e5d4eada5d57cae40e09185";
+const LINUX_EXE_SHA256: &str = "b9ead0cc067ce79f28e6c0ee844dea66df828c8a917fb20553718a996eb54cc2";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -62,27 +63,38 @@ pub fn verified(executable: &Path) -> Result<bool, String> {
     let marker: Marker =
       serde_json::from_slice(&std::fs::read(&marker_path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    if !cfg!(target_os = "windows")
-      || marker.schema_version != 1
+    let (platform, expected_exe, expected_dll) =
+      if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        ("windows-x64", EXE_SHA256, DLL_SHA256)
+      } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        ("linux-x64", LINUX_EXE_SHA256, "")
+      } else {
+        return Err("Unsupported local engine platform".into());
+      };
+    if marker.schema_version != 1
       || marker.policy_id != "authorized-local-v1"
-      || marker.platform != "windows-x64"
+      || marker.platform != platform
       || marker.technical_version != "155.0.8059.79"
-      || marker.exe_sha256 != EXE_SHA256
-      || marker.dll_sha256 != DLL_SHA256
+      || marker.exe_sha256 != expected_exe
+      || marker.dll_sha256 != expected_dll
       || marker.license_mode != "offline-local"
       || marker.source_rebuilt
       || marker.vendor_credentials_included
     {
       return Err("Unsupported local engine policy".into());
     }
-    for file in [executable.to_path_buf(), root.join("chrome.dll")] {
+    let mut payloads = vec![(executable.to_path_buf(), expected_exe)];
+    if !expected_dll.is_empty() {
+      payloads.push((root.join("chrome.dll"), expected_dll));
+    }
+    for (file, expected) in payloads {
       let metadata = std::fs::symlink_metadata(&file).map_err(|e| e.to_string())?;
       if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("Linked local engine payload refused".into());
       }
-    }
-    if file_hash(executable)? != EXE_SHA256 || file_hash(&root.join("chrome.dll"))? != DLL_SHA256 {
-      return Err("Local engine payload checksum mismatch".into());
+      if file_hash(&file)? != expected {
+        return Err("Local engine payload checksum mismatch".into());
+      }
     }
     Ok(true)
   };

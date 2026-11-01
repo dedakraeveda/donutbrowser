@@ -73,12 +73,14 @@ suffix = '.exe' if os.name == 'nt' else ''
 # Existing source helper recognizes CARGO_TARGET_DIR and copies exact host sidecar.
 run(['node', 'src-tauri/copy-proxy-binary.mjs', '--release'])
 run(['cargo', 'build', '--locked', '--release', '--manifest-path', manifest, '--bin', 'donutbrowser'])
-if os.name == 'nt':
+if os.name == 'nt' or sys.platform.startswith('linux'):
     run(['cargo', 'build', '--locked', '--manifest-path', 'e2e/app/Cargo.toml'])
+    run(['cargo', 'install', 'tauri-wd', '--version', '0.2.2', '--locked', '--debug', '--root', WORK/'driver'])
 OUTPUT.mkdir()
 files = [TARGET/'release'/('donutbrowser'+suffix), TARGET/'release'/('donut-proxy'+suffix)]
-if os.name == 'nt':
-    files.append(TARGET/'debug/donutbrowser-e2e.exe')
+if os.name == 'nt' or sys.platform.startswith('linux'):
+    files.append(TARGET/'debug'/('donutbrowser-e2e'+suffix))
+    files.append(WORK/'driver/bin'/('tauri-wd'+suffix))
 files += list((SOURCE/'src-tauri/binaries').glob('xray-*'))
 files += [SOURCE/'LICENSE', ROOT/'distribution/port036-wayfern/manifest.json', ROOT/'AUTHORIZED_FORK.md']
 report = {'platform': sys.platform, 'architecture': os.environ.get('BUILD_ARCH'),
